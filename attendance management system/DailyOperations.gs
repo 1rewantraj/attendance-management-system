@@ -242,12 +242,44 @@ function automated_closeForms() {
 
     try {
       var form = FormApp.openById(activeFormId);
+      var formTitle = form.getTitle();
+
+      // 1. Stop accepting new responses.
       form.setAcceptingResponses(false);
+
+      // 2. FINAL SYNC before we destroy the form: capture any responses that
+      //    arrived since the last hourly sync, so no attendance is lost when the
+      //    form + its response tab are deleted below. Attendance lives in the
+      //    month tabs' day-columns — NOT in the "Form Responses" tab — so once
+      //    this sync runs, the form and its response tab are safe to remove.
+      var ss = SpreadsheetApp.openById(ssId);
+      var today = new Date();
+      var monthSheet = ss.getSheetByName(today.toLocaleString('en-US', { month: 'long' }));
+      if (monthSheet) {
+        executeSheetSyncProcessing(monthSheet, activeFormId, today.getDate(), ssId);
+      }
+
+      // 3. Unlink the form's response destination, then delete every
+      //    "Form Responses N" tab (they accumulate one per day otherwise).
+      try { form.removeDestination(); } catch (e) { /* not always linkable; ignore */ }
+      var allSheets = ss.getSheets();
+      for (var s = 0; s < allSheets.length; s++) {
+        var name = allSheets[s].getName();
+        if (name.indexOf('Form Responses') === 0 && ss.getSheets().length > 1) {
+          ss.deleteSheet(allSheets[s]);
+          Logger.log("   🧹 Deleted response tab: " + name + " (" + file.getName() + ")");
+        }
+      }
+
+      // 4. Trash the Form file from the output folder.
+      DriveApp.getFileById(activeFormId).setTrashed(true);
+
+      // 5. Clear runtime state. NOTIFIED_ reset so tomorrow's submitters get
+      //    their one confirmation email again (see notifySubmitters in Utils.gs).
       props.deleteProperty('ACTIVE_FORM_' + ssId);
-      // Reset the per-day "already emailed" set so tomorrow's submitters get
-      // their one confirmation email again (see notifySubmitters in Utils.gs).
       props.deleteProperty('NOTIFIED_' + ssId);
-      Logger.log("🔒 Closed form: " + form.getTitle());
+
+      Logger.log("🔒 Closed + cleaned up form: " + formTitle);
     } catch (err) {
       Logger.log("Error closing form for " + file.getName() + ": " + err.message);
     }
