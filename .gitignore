@@ -1,0 +1,10 @@
+# Data files (spreadsheets / generated data) — excluded from the repo
+*.xlsx
+*.xls
+*.csv
+Goonjan AI Integrations - Team4Tech x Ek Tara/
+
+# Local editor / tooling settings
+.claude/
+.cursor/
+.DS_Store
