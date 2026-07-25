@@ -1162,11 +1162,13 @@ function createDashboardIfNotExists(ss) {
   let dashboardSheet = ss.getSheetByName(dashboardName);
 
   if (!dashboardSheet) {
-    dashboardSheet = ss.insertSheet(dashboardName);
+    dashboardSheet = ss.insertSheet(dashboardName, 0);  // create as the FIRST tab
     Logger.log("Created missing 'Analysis_Dashboard' for: " + ss.getName());
     // Populate the newly created sheet
     updateDashboard(ss);
   } else {
+    ss.setActiveSheet(dashboardSheet);
+    ss.moveActiveSheet(1);  // ensure it stays pinned as the first tab
     Logger.log("'Analysis_Dashboard' already exists for: " + ss.getName());
   }
 }
@@ -1184,10 +1186,14 @@ function updateDashboard(ss) {
 
   // Fallback check to ensure tab exists before updating
   if (!dashboardSheet) {
-    dashboardSheet = ss.insertSheet(dashboardName);
+    dashboardSheet = ss.insertSheet(dashboardName, 0);  // create as the FIRST tab
   } else {
     dashboardSheet.clear();
   }
+
+  // Keep the dashboard pinned as the first tab so it's the landing view.
+  ss.setActiveSheet(dashboardSheet);
+  ss.moveActiveSheet(1);
 
   // Clear existing charts
   dashboardSheet.getCharts().forEach(c => dashboardSheet.removeChart(c));
