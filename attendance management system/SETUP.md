@@ -1,209 +1,158 @@
-# Initial Setup Guide
+# Setup Guide (Plain-English)
 
-How to stand up the **Ek Tara Attendance Management System** from scratch: what the
-code files are, **where to make configuration changes**, how to prepare the Google
-Drive folders and files (with exact naming conventions), and the exact order of
-functions to run — including installing the automation triggers.
+This guide walks you through setting up the **Ek Tara Attendance System** step by step.
+You do **not** need to be a programmer. Just follow the steps in order.
 
-> Companion doc: once set up, see **`RESET.md`** for how to reset for a fresh start.
+Once it's running, this system will:
+- Email each teacher a **daily attendance form** every morning.
+- Automatically **record the answers** into a spreadsheet for each class.
+- Keep **charts and summaries** up to date.
+- Send a **weekly report** to the people in charge.
 
----
-
-## 0. What this system does (30-second overview)
-
-- A pool of **class rosters** (one file per class-section) lives in an **input folder**.
-- Setup builds one **attendance workbook per class-section** in an **output folder**,
-  with a month tab per academic month and a day-column per day.
-- Every morning a trigger emails each teacher a **Google Form** to mark attendance;
-  an hourly trigger **syncs** responses into the workbook and refreshes an
-  **`Analysis_Dashboard`** tab; a nightly trigger closes the forms; a weekly trigger
-  emails a stakeholder digest.
+> Need to start over later? See the companion file **`RESET.md`**.
 
 ---
 
-## 1. The code — files and what each contains
+## Before you start — what you'll need
 
-All code lives in the `attendance management system/` folder as Apps Script files.
-**Apps Script runs on Google's servers** — you cannot run it locally; you paste/push
-these files into an Apps Script project bound to your Google account and run the
-functions there.
-
-| File | Role | You edit it during setup? |
-|------|------|---------------------------|
-| **`SetConfig.gs`** | All global configuration (folder links, file names, academic year, alert thresholds, stakeholder emails). | ✅ **YES — this is the main file you change.** |
-| **`SetupOperations.gs`** | One-time / manual admin functions: generate & update workbooks, reset helpers, setup validator. | Rarely (run its functions). |
-| **`DailyOperations.gs`** | The 4 automated (trigger) operations + manual form/close/validate helpers + the **trigger installer**. | No (run its functions). |
-| **`Utils.gs`** | Shared helpers: file-name parsing, config loaders, workbook builder, sync engine, email/HTML, dashboard. | No. |
-
-### Function naming convention (important)
-
-Every function is prefixed to make its purpose unambiguous:
-
-- **`automated_*`** — run by a **time-based trigger** (one function per trigger). Do not
-  run these by hand except to test.
-- **`manual_*`** — run **by an admin on demand** from the Apps Script editor.
-
-The 4 automated operations:
-
-| Function | Trigger | Schedule |
-|----------|---------|----------|
-| `automated_sendDailyForms` | time-based | Daily at **6 AM** |
-| `automated_syncResponses` | time-based | **Every hour** |
-| `automated_closeForms` | time-based | Daily at **11 PM** |
-| `automated_sendWeeklyReport` | time-based | **Fridays at 5 PM** |
+- A Google account that will own everything (forms, spreadsheets, emails go out from it).
+- The list of teachers and which class each one handles.
+- A student list (roster) for each class.
 
 ---
 
-## 2. WHERE to make code changes — `SetConfig.gs`
+## Step 1 — Create 3 folders in Google Drive
 
-**Almost all setup changes happen in `SetConfig.gs`.** Edit these values before your
-first run:
+Make these three folders (any names you like) and keep their web links handy:
 
-| Variable | What to set it to | Example |
-|----------|-------------------|---------|
-| `INPUT_FOLDER_LINK` | Drive URL of the folder holding class rosters | `https://drive.google.com/drive/folders/…` |
-| `ATTENDANCE_SHEETS_FOLDER_LINK` | Drive URL of the (initially empty) output folder | `…/folders/…` |
-| `CONFIG_FOLDER_LINK` | Drive URL of the folder holding config files | `…/folders/…` |
-| `MAPPING_FILE_NAME` | Base name of the teacher↔class mapping file | `TeacherClassMapping` |
-| `HOLIDAY_FILE_NAME` | Base name of the public-holiday file | `publicHoliday` |
-| `ACADEMIC_YEAR` | `"<startYear>-<endYear>"` — **drives the workbook name** | `"2026-2027"` |
-| `START_MONTH` / `END_MONTH` | First/last academic month (1 = Jan … 12 = Dec) | `6` (June) / `4` (April) |
-| `STAKEHOLDER_EMAILS` | Comma-separated recipients of the weekly report | `"a@x.com,b@x.com"` |
-| Alert thresholds | `CONSECUTIVE_ABSENT_THRESHOLD_DAYS`, `LATE_*`, `ABSENT_*`, etc. | keep defaults unless needed |
-| `ADHOC_*` | Defaults used by `manual_runAdhocForm` (makeup forms) | class, section, teacher, date |
+1. **Rosters folder** — where you'll put the student lists.
+2. **Attendance folder** — leave this **empty**; the system fills it automatically.
+3. **Settings folder** — where you'll put the teacher list and holiday list.
 
-> `ADD_VISUALISATIONS` and `MAX_EXECUTION_TIME` normally stay as-is. Do **not** leave
-> `ADD_VISUALISATIONS` undefined — the validators log it and would throw otherwise.
-
-Everything else (thresholds, adhoc defaults) is optional tuning. **No file paths or
-names are hard-coded elsewhere** — the workbook name is centralized in
-`getWorkbookName()` in `Utils.gs`, so you never edit names in multiple places.
+To get a folder's link: open the folder in Google Drive → copy the address from the
+browser's address bar.
 
 ---
 
-## 3. Prepare Google Drive — folders and files (naming conventions)
+## Step 2 — Add your files to the folders
 
-Create **three folders** and paste their URLs into `SetConfig.gs` (Section 2).
+### In the "Rosters" folder — one file per class
 
-### 3a. Input folder — class rosters (one file per class-section)
+Put one student list per class-section. It can be an **Excel file, a CSV, or a Google
+Sheet**.
 
-- **File type:** `.csv`, `.xlsx`/Excel, or a Google Sheet — all supported.
-- **File name must contain the class number and section** so the parser can read
-  them. The parser looks for `class <X>` / `grade <X>` plus a standalone section
-  letter. Underscores are treated as spaces.
+- **The file name must include the class number and section.** Examples that work:
+  - `Class 1 A`
+  - `Class 5 B`
+  - `Grade 7 C`
+- **Inside the file**, use a header row with these columns (in any order):
+  **Roll No.**, **Child ID**, **Name of Student**. One row per student.
 
-  | Good file names | Parsed as |
-  |-----------------|-----------|
-  | `Class 1 A.xlsx` | class `1`, section `A` |
-  | `Class_5_B` | class `5`, section `B` |
-  | `Grade 7 C.csv` | class `7`, section `C` |
+### In the "Settings" folder — the teacher list (required)
 
-- **Roster contents:** a header row plus one row per student. Recognized headers
-  (case-insensitive, any order): **Roll No.**, **Child ID**, **Name / Student**.
-  - If no header is detected, columns are assumed to be `[Child ID, Name, …]` and
-    Roll No. is auto-numbered.
-  - Only these three fields are used; extra columns are ignored.
+Create a file named **`TeacherClassMapping`** with these columns:
 
-### 3b. Config folder — mapping, holidays, roles
+| Name | Email | Class | Section |
+|------|-------|-------|---------|
+| Meena | meena@example.com | 1 | A |
+| Ravi | ravi@example.com | 5 | B |
 
-Put these files in the **config folder**. Names are matched loosely (case-insensitive,
-substring), but use these exact base names to be safe:
+This tells the system **which teacher gets the form for which class**.
 
-| File (base name) | Required? | Purpose | Expected columns (header row) |
-|------------------|-----------|---------|-------------------------------|
-| **`TeacherClassMapping`** | ✅ **Required** | Maps each class-section → teacher name + email (who gets the daily form). | `Name`, `Email`, `Class` (or `Grade`), `Section` |
-| **`publicHoliday`** | Recommended | Days to skip sending forms. | `Date` (single or `start - end` range), or `Start Date` + `End Date` / `From` + `To` |
-| **`programManagers`** | Optional | PM contacts for permissions/escalation. | `ID`, `Email` |
-| **`teacherLeads`** | Optional | Lead contacts, linked to a manager. | `ID`, `Email`, `Manager ID` |
-| **`default sharing scopes`** | Optional | A Sheet with `Roles` and `Stakeholders` tabs controlling who gets edit/view access on generated workbooks. | Stakeholders tab: `Email` (or `Email ID`), `Scope` (`edit`/`view`) |
+### In the "Settings" folder — the holiday list (recommended)
 
-- Dates accept `DD/MM/YYYY`, `DD-MM-YYYY`, or `YYYY-MM-DD`; ranges via `"start - end"`
-  or `"start to end"`.
-- If `default sharing scopes` / managers / leads are absent, setup still works — it
-  just falls back to fewer permissions.
+Create a file named **`publicHoliday`** listing days when **no forms** should go out
+(weekends are skipped automatically). Use a **Date** column. You can enter a single day
+or a range like `10/10/2026 - 15/10/2026`.
 
-### 3c. Output folder — generated workbooks (created for you)
-
-Start **empty**. Setup fills it with:
-
-| Artifact | Naming convention | Example |
-|----------|-------------------|---------|
-| Attendance workbook | `Class_<classNum>_<SECTION>_<ACADEMIC_YEAR>` | `Class_1_A_2026-2027` |
-| Daily form (later, at runtime) | `Attendance: Class <classNum>-<SECTION> (<dd-MMM-yyyy>)` | `Attendance: Class 1-A (25-Jul-2026)` |
-| Makeup form | `Attendance (Makeup): Class <classNum>-<SECTION> (<dd-MMM-yyyy>)` | `Attendance (Makeup): Class 5-A (25-Jul-2026)` |
-
-- `<SECTION>` is always **UPPERCASE**; `<ACADEMIC_YEAR>` is the value from
-  `SetConfig.gs`.
-- Each workbook has a **tab per academic month** (from `START_MONTH` to `END_MONTH`),
-  columns `A/B/C = Roll No. / Child ID / Name`, then a **day-column per day**, then
-  Present/Absent/Late/Total/Percentage summary rows, plus an `Analysis_Dashboard` tab.
+*(Optional advanced files — `programManagers`, `teacherLeads`, `default sharing scopes`
+— control who can view/edit the spreadsheets. You can skip these to start; the system
+still works without them.)*
 
 ---
 
-## 4. Enable the required Google services
+## Step 3 — Fill in the settings file (`SetConfig.gs`)
 
-In the Apps Script editor:
+This is the **only file you need to edit**. Open it in the Apps Script editor and change
+these lines:
 
-1. **Advanced Drive Service** — **Services (＋)** → add **Drive API**. Required by
-   `parseAndNormalizeData` to convert Excel rosters (`Drive.Files.copy`). *(CSV and
-   Google Sheet rosters work without it, but enable it to be safe.)*
-2. On the **first run** of any function, Google prompts for **authorization** — grant
-   the scopes (Drive, Sheets, Forms, Gmail/MailApp, Script triggers). This is required
-   for the automations to send mail and manage files.
+- **`INPUT_FOLDER_LINK`** → paste the link to your **Rosters** folder.
+- **`ATTENDANCE_SHEETS_FOLDER_LINK`** → paste the link to your **Attendance** folder.
+- **`CONFIG_FOLDER_LINK`** → paste the link to your **Settings** folder.
+- **`ACADEMIC_YEAR`** → the school year, e.g. `"2026-2027"`.
+- **`START_MONTH`** / **`END_MONTH`** → the first and last month of the year as numbers
+  (June = `6`, April = `4`).
+- **`STAKEHOLDER_EMAILS`** → who should get the weekly report, separated by commas.
 
----
-
-## 5. Run order — the exact sequence
-
-Run each from the Apps Script editor (**Select function → Run**). Watch the
-**Execution log** after each.
-
-| Step | Function | File | What it does |
-|------|----------|------|--------------|
-| 1 | `manual_validateConfig` | DailyOperations | Confirms all three folders are reachable. Must pass. |
-| 2 | `manual_validateSetupConfig` | SetupOperations | Confirms setup config/roles/holidays load. Must pass. |
-| 3 | `manual_generateSheets` | SetupOperations | Builds one `Class_<n>_<SEC>_<year>` workbook per roster. **Re-run if it stops on the 6-min limit** — `FLOW1_TOKEN` resumes automatically. |
-| 4 | `manual_installTriggers` | DailyOperations | Installs the 4 `automated_*` triggers. **Run once.** |
-| 5 | *(optional test)* `automated_sendDailyForms` | DailyOperations | Manually fire once to confirm a teacher receives a form. |
-| 6 | *(optional test)* `automated_syncResponses` | DailyOperations | Manually fire after a test submission to confirm it writes to the workbook + dashboard. |
-
-**Mid-year roster changes** (new students / new classes added later): drop the updated
-roster into the input folder and run **`manual_updateSheets`** (uses `FLOW2_TOKEN`;
-re-run if it times out). It adds new students without disturbing existing data.
+Leave everything else as it is. Save the file.
 
 ---
 
-## 6. Triggers — how they get installed and the limit
+## Step 4 — Turn on Google's file service (one-time)
 
-`manual_installTriggers()` (in `DailyOperations.gs`) creates exactly these 4
-time-based triggers — **one function per trigger**:
+In the Apps Script editor, on the left, click the **＋** next to **Services**, find
+**Drive API**, and add it. (This lets the system read Excel files.)
 
-```
-automated_sendDailyForms    → daily @ 6 AM
-automated_syncResponses     → every 1 hour
-automated_closeForms        → daily @ 11 PM
-automated_sendWeeklyReport  → Fridays @ 5 PM
-```
-
-> ⚠️ **20-trigger limit:** Google caps a project at **20 triggers per user**. This
-> design uses only **4** (independent of the number of classes) precisely to stay well
-> under the cap — attendance auth is handled inside the hourly sync, **not** via a
-> per-form `onFormSubmit` trigger. If you ever re-run `manual_installTriggers` without
-> deleting the old ones, you'll create duplicates — always delete first (Triggers page
-> → ⋮ → Delete) so the page shows exactly 4.
-
-After setup the system is autonomous: forms go out at 6 AM, sync hourly, close at
-11 PM, weekly report Fridays — with all history accumulating in the workbooks.
+The **first time** you run anything, Google will ask you to **allow permissions** — click
+through and accept. This is needed so it can send emails and manage your files.
 
 ---
 
-## 7. Post-setup checklist
+## Step 5 — Run the setup, in this exact order
 
-- [ ] `SetConfig.gs`: three folder links + `ACADEMIC_YEAR` + `STAKEHOLDER_EMAILS` set.
-- [ ] Input folder has one correctly-named roster per class-section.
-- [ ] Config folder has `TeacherClassMapping` (required) and `publicHoliday`.
-- [ ] Advanced Drive service enabled; authorization granted.
-- [ ] `manual_validateConfig` and `manual_validateSetupConfig` both pass.
-- [ ] `manual_generateSheets` produced one `Class_<n>_<SEC>_<year>` workbook per class.
-- [ ] `manual_installTriggers` run once; Triggers page shows exactly **4**.
-- [ ] Test form received and a test response synced into the workbook.
+In the Apps Script editor, pick each function from the dropdown and click **Run**. Wait
+for it to finish and check the log message before moving to the next.
+
+1. **`manual_validateConfig`** — checks it can reach your 3 folders. Should say success.
+2. **`manual_validateSetupConfig`** — checks your settings/teacher/holiday files load. Should say success.
+3. **`manual_generateSheets`** — creates one attendance spreadsheet per class.
+   - If it says it "ran out of time," just **run it again** — it picks up where it left off.
+4. **`manual_installTriggers`** — turns on the daily automation. **Run this only once.**
+
+That's it. The system is now live.
+
+---
+
+## Step 6 — (Optional) Test it
+
+- Run **`automated_sendDailyForms`** once and check that a teacher gets a form email.
+- Fill in that form, then run **`automated_syncResponses`** and check the answers appear
+  in that class's spreadsheet.
+
+---
+
+## What happens automatically after setup
+
+You don't touch anything day to day. Behind the scenes:
+
+- **6:00 AM every day** — a fresh attendance form is emailed to each teacher.
+- **Every hour** — new responses are saved into the spreadsheets and charts update.
+- **11:00 PM every day** — the day's forms are closed.
+- **Every Friday, 5:00 PM** — a summary report is emailed to the stakeholders.
+
+Weekends and the holidays you listed are skipped automatically.
+
+---
+
+## Good to know
+
+- **File names the system creates:** each class spreadsheet is named like
+  `Class_1_A_2026-2027`, and each daily form is named like
+  `Attendance: Class 1-A (25-Jul-2026)`. You don't create these — they appear on their own.
+- **New students mid-year:** update that class's roster file, then run
+  **`manual_updateSheets`**. It adds the new students without erasing existing records.
+- **Don't run the setup twice:** running `manual_installTriggers` more than once creates
+  duplicate automations. If unsure, open the **Triggers** page (clock icon) — you should
+  see exactly **4** items. Delete any extras.
+
+---
+
+## Quick checklist
+
+- [ ] 3 folders created and their links pasted into `SetConfig.gs`.
+- [ ] One correctly-named roster per class in the Rosters folder.
+- [ ] `TeacherClassMapping` (and `publicHoliday`) in the Settings folder.
+- [ ] Drive API added; permissions accepted on first run.
+- [ ] Ran, in order: validate config → validate setup → generate sheets → install triggers.
+- [ ] Triggers page shows exactly 4 items.
+- [ ] (Optional) Sent a test form and saw a test response appear in the spreadsheet.
