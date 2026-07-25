@@ -10,7 +10,7 @@ function manual_generateSheets() {
   
   try { DriveApp.getRootFolder(); } catch(e) {} 
   
-  var inputFolder = getFolderByLink(INPUT_FOLDER_LINK);
+  var inputFolder = getFolderByLink(STUDENT_CLASS_LIST_FOLDER_LINK);
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
   var configFolder = getFolderByLink(CONFIG_FOLDER_LINK);
   
@@ -88,7 +88,7 @@ function manual_updateSheets() {
   Logger.log("STEP 2: STARTING MID-YEAR DELTA UPDATE CHECK");
   Logger.log("=========================================================");
   
-  var inputFolder = getFolderByLink(INPUT_FOLDER_LINK);
+  var inputFolder = getFolderByLink(STUDENT_CLASS_LIST_FOLDER_LINK);
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
   var configFolder = getFolderByLink(CONFIG_FOLDER_LINK);
   
@@ -261,7 +261,7 @@ function manual_validateSetupConfig() {
 
   // Check folders
   try {
-    var inputFolder = getFolderByLink(INPUT_FOLDER_LINK);
+    var inputFolder = getFolderByLink(STUDENT_CLASS_LIST_FOLDER_LINK);
     Logger.log("✅ Input folder: " + inputFolder.getName());
 
     var fileCount = 0;
@@ -276,7 +276,7 @@ function manual_validateSetupConfig() {
       warnings.push("Input folder is empty. Add roster files before running setup.");
     }
   } catch(e) {
-    errors.push("Cannot access INPUT_FOLDER_LINK: " + e.message);
+    errors.push("Cannot access STUDENT_CLASS_LIST_FOLDER_LINK: " + e.message);
   }
 
   try {

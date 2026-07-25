@@ -10,7 +10,7 @@ function automated_sendDailyForms() {
 
   var todayStr = Utilities.formatDate(today, Session.getScriptTimeZone(), "dd-MMM-yyyy");
   var configFolder = getFolderByLink(CONFIG_FOLDER_LINK);
-  var rosterFolder = getFolderByLink(INPUT_FOLDER_LINK);
+  var rosterFolder = getFolderByLink(STUDENT_CLASS_LIST_FOLDER_LINK);
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
   
   var rosterFiles = rosterFolder.getFiles();
@@ -579,10 +579,10 @@ function manual_validateConfig() {
   }
   
   try {
-    var rosterFolder = getFolderByLink(INPUT_FOLDER_LINK);
+    var rosterFolder = getFolderByLink(STUDENT_CLASS_LIST_FOLDER_LINK);
     Logger.log("✅ Input folder accessible: " + rosterFolder.getName());
   } catch(e) {
-    errors.push("❌ Cannot access INPUT_FOLDER_LINK: " + e.message);
+    errors.push("❌ Cannot access STUDENT_CLASS_LIST_FOLDER_LINK: " + e.message);
   }
   
   try {

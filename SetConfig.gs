@@ -4,7 +4,7 @@
 
 // Folder Links — REPLACE these placeholders with your own Google Drive folder URLs.
 // (Get a folder's link: open it in Drive → copy the address bar URL.)
-var INPUT_FOLDER_LINK = "https://drive.google.com/drive/folders/YOUR_INPUT_FOLDER_ID";
+var STUDENT_CLASS_LIST_FOLDER_LINK = "https://drive.google.com/drive/folders/YOUR_STUDENT_CLASS_LIST_FOLDER_ID";
 var ATTENDANCE_SHEETS_FOLDER_LINK = "https://drive.google.com/drive/folders/YOUR_OUTPUT_FOLDER_ID";
 var CONFIG_FOLDER_LINK = "https://drive.google.com/drive/folders/YOUR_CONFIG_FOLDER_ID";
 

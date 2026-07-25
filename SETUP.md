@@ -76,7 +76,7 @@ still works without them.)*
 This is the **only file you need to edit**. Open it in the Apps Script editor and change
 these lines:
 
-- **`INPUT_FOLDER_LINK`** → paste the link to your **Rosters** folder.
+- **`STUDENT_CLASS_LIST_FOLDER_LINK`** → paste the link to your **Rosters** folder.
 - **`ATTENDANCE_SHEETS_FOLDER_LINK`** → paste the link to your **Attendance** folder.
 - **`CONFIG_FOLDER_LINK`** → paste the link to your **Settings** folder.
 - **`ACADEMIC_YEAR`** → the school year, e.g. `"2026-2027"`.
