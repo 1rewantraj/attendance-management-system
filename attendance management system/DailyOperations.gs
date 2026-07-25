@@ -327,6 +327,95 @@ function manual_closeFormsFlexibly() {
 }
 
 // =========================================================================
+// MANUAL (admin run): Orphan Form + Response-Tab Cleanup
+// -------------------------------------------------------------------------
+// automated_closeForms only cleans up a workbook whose ACTIVE_FORM_<ssId>
+// property is still set. Forms whose pointer was already cleared (or never
+// set) become ORPHANS — the Form file lingers in the output folder and its
+// "Form Responses N" tab lingers in the workbook. This function finds and
+// removes them by SCANNING the folder, independent of any Script Property.
+//
+// It is data-safe: for each Form still linked to a workbook it runs a final
+// sync (writing attendance into the month tabs) BEFORE deleting the form and
+// its response tabs. Attendance lives in the month tabs — never in the
+// "Form Responses" tab — so nothing is lost.
+// =========================================================================
+function manual_cleanupOrphanForms() {
+  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
+  var formsDeleted = 0, tabsDeleted = 0;
+
+  // 1. Delete every Attendance Form file in the output folder. First do a final
+  //    sync into its destination workbook so no submitted response is lost.
+  var formFiles = outputFolder.getFilesByType(MimeType.GOOGLE_FORMS);
+  while (formFiles.hasNext()) {
+    var formFile = formFiles.next();
+    var title = formFile.getName();
+    // Only touch attendance forms this system generates.
+    if (title.indexOf("Attendance") !== 0) continue;
+
+    try {
+      var form = FormApp.openById(formFile.getId());
+      form.setAcceptingResponses(false);
+
+      // Final sync if the form is linked to a workbook we can resolve.
+      var destId = null;
+      try { destId = form.getDestinationId(); } catch (e) { destId = null; }
+      if (destId) {
+        try {
+          var ss = SpreadsheetApp.openById(destId);
+          var today = new Date();
+          var monthSheet = ss.getSheetByName(today.toLocaleString('en-US', { month: 'long' }));
+          if (monthSheet) {
+            executeSheetSyncProcessing(monthSheet, formFile.getId(), today.getDate(), destId);
+          }
+        } catch (e2) {
+          Logger.log("   [WARN] Final sync failed for " + title + ": " + e2.message);
+        }
+      }
+      try { form.removeDestination(); } catch (e3) { /* ignore */ }
+    } catch (eForm) {
+      Logger.log("   [WARN] Could not open form " + title + ": " + eForm.message);
+    }
+
+    formFile.setTrashed(true);
+    formsDeleted++;
+    Logger.log("🧹 Trashed form file: " + title);
+  }
+
+  // 2. In every workbook, delete leftover "Form Responses N" tabs.
+  var sheetFiles = outputFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
+  while (sheetFiles.hasNext()) {
+    var sf = sheetFiles.next();
+    try {
+      var wb = SpreadsheetApp.openById(sf.getId());
+      var tabs = wb.getSheets();
+      for (var s = 0; s < tabs.length; s++) {
+        var tabName = tabs[s].getName();
+        if (tabName.indexOf('Form Responses') === 0 && wb.getSheets().length > 1) {
+          wb.deleteSheet(tabs[s]);
+          tabsDeleted++;
+          Logger.log("🧹 Deleted response tab '" + tabName + "' in " + sf.getName());
+        }
+      }
+    } catch (eWb) {
+      Logger.log("   [WARN] Could not clean workbook " + sf.getName() + ": " + eWb.message);
+    }
+  }
+
+  // 3. Clear any lingering ACTIVE_FORM_ / NOTIFIED_ pointers (now dangling).
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  for (var key in all) {
+    if (key.indexOf('ACTIVE_FORM_') === 0 || key.indexOf('NOTIFIED_') === 0) {
+      props.deleteProperty(key);
+    }
+  }
+
+  Logger.log("✅ Orphan cleanup complete. Forms trashed: " + formsDeleted +
+             ", response tabs deleted: " + tabsDeleted + ".");
+}
+
+// =========================================================================
 // AUTOMATED (Friday 5 PM trigger): Weekly Stakeholder Report
 // =========================================================================
 function automated_sendWeeklyReport() {
