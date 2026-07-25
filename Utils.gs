@@ -26,7 +26,14 @@ function getFolderByLink(url) {
 function comprehensiveFileSearch(keyword, folder) {
   var matchingFiles = [];
   var cleanKeyword = keyword.toLowerCase().replace(/[\s_]+/g, "");
-  var filesIterator = folder ? folder.getFiles() : DriveApp.getFiles();
+  // Guard: scanning the whole Drive (DriveApp.getFiles()) can iterate tens of
+  // thousands of files and blow the 6-min limit. Require a folder scope.
+  if (!folder) {
+    Logger.log("    [WARNING] comprehensiveFileSearch called without a folder for '" +
+               keyword + "'. Skipping whole-Drive scan to avoid timeout.");
+    return matchingFiles;
+  }
+  var filesIterator = folder.getFiles();
 
   while (filesIterator.hasNext()) {
     var file = filesIterator.next();
@@ -159,7 +166,10 @@ function buildMasterConfig(configFolder) {
   var masterConfig = { roles: {}, stakeholders: { editors: [], viewers: [] }, classMap: {} };
 
   var ssScopes = null;
-  var scopeMatches = comprehensiveFileSearch("default sharing scopes", null);
+  // Search ONLY inside the config folder. Passing null here would make
+  // comprehensiveFileSearch fall back to DriveApp.getFiles() and scan the
+  // ENTIRE Drive — on a large Drive that runs until the 6-min limit and hangs.
+  var scopeMatches = comprehensiveFileSearch("default sharing scopes", configFolder);
   if (scopeMatches.length > 0) {
     var bestScopeFile = scopeMatches[0];
     Logger.log("    [MATCH FOUND] Scopes config matched to: " + bestScopeFile.getName());
