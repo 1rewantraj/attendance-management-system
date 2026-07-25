@@ -945,8 +945,12 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
   try {
     var form = FormApp.openById(activeFormId);
     var responses = form.getResponses();
-    if (responses.length === 0) return;
+    if (responses.length === 0) {
+      Logger.log("      [SYNC] No responses yet for form on '" + sheet.getName() + "'. Nothing to write.");
+      return;
+    }
 
+    // Locate the column whose header equals today's day-of-month digit.
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     var dateColIndex = -1;
     for (var c = 0; c < headers.length; c++) {
@@ -955,15 +959,30 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
         break;
       }
     }
-    if (dateColIndex === -1) return;
-
-    var studentNamesInSheet = [];
-    var nameRange = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
-    for (var r = 0; r < nameRange.length; r++) {
-      studentNamesInSheet.push(nameRange[r][0].toString().trim());
+    if (dateColIndex === -1) {
+      Logger.log("      [SYNC][WARNING] No day column for day " + dayOfMonthDigit +
+                 " on sheet '" + sheet.getName() + "'. Possible weekend/holiday or month mismatch. Skipping.");
+      return;
     }
 
+    // Build a normalized lookup: collapsed-whitespace + lowercase name -> sheet row index.
+    // This tolerates trailing/double spaces and case differences between the form's
+    // grid labels and the sheet's Name column (a common cause of silently-blank cells).
+    var studentIndexByName = {};
+    var lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      var nameRange = sheet.getRange(2, 3, lastRow - 1, 1).getValues();
+      for (var r = 0; r < nameRange.length; r++) {
+        var normName = normalizeNameForMatch(nameRange[r][0]);
+        if (normName !== "") studentIndexByName[normName] = r; // 0-based within student block
+      }
+    }
+
+    // Process the latest response only (a teacher's most recent submission wins).
     var itemResponses = responses[responses.length - 1].getItemResponses();
+    var written = 0, skipped = 0;
+    var skippedNames = [];
+
     for (var j = 0; j < itemResponses.length; j++) {
       var itemResponse = itemResponses[j];
       if (itemResponse.getItem().getType() === FormApp.ItemType.GRID) {
@@ -971,16 +990,38 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
         var studentStatuses = itemResponse.getResponse();
 
         for (var s = 0; s < rows.length; s++) {
-          var sheetIndex = studentNamesInSheet.indexOf(rows[s].trim());
-          if (sheetIndex !== -1 && studentStatuses[s]) {
-            sheet.getRange(sheetIndex + 2, dateColIndex).setValue(studentStatuses[s]);
+          var status = studentStatuses[s];
+          if (!status) { continue; } // teacher left this student blank in the grid
+
+          var key = normalizeNameForMatch(rows[s]);
+          if (studentIndexByName.hasOwnProperty(key)) {
+            var sheetIndex = studentIndexByName[key];
+            sheet.getRange(sheetIndex + 2, dateColIndex).setValue(status);
+            written++;
+          } else {
+            skipped++;
+            skippedNames.push(rows[s]);
           }
         }
       }
     }
+
+    Logger.log("      [SYNC] '" + sheet.getName() + "' day " + dayOfMonthDigit +
+               ": wrote " + written + " status(es), skipped " + skipped + ".");
+    if (skipped > 0) {
+      Logger.log("      [SYNC][WARNING] " + skipped + " form row(s) had no matching student in the sheet: " +
+                 skippedNames.join(" | "));
+    }
   } catch(err) {
     Logger.log("Error inside sync block: " + err.message);
   }
+}
+
+// Normalizes a name for tolerant matching between form grid rows and the sheet's
+// Name column: trims, collapses internal whitespace to a single space, lowercases.
+function normalizeNameForMatch(value) {
+  if (value === null || value === undefined) return "";
+  return value.toString().replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 /**
