@@ -65,7 +65,10 @@ function automated_sendDailyForms() {
     var formTitle = "Attendance: Class " + classNum + "-" + section.toUpperCase() + " (" + todayStr + ")";
     var form = FormApp.create(formTitle);
     form.setDescription("Mark attendance for " + todayStr);
-    form.setCollectEmail(true);
+    // VERIFIED = auto-capture the signed-in Google account email as read-only
+    // (NOT a free-text box the teacher can type/mistype). This is the email the
+    // hourly sync matches against AUTHORIZED_TEACHER_ for authorization.
+    form.setEmailCollectionType(FormApp.EmailCollectionType.VERIFIED);
     form.setLimitOneResponsePerUser(true);  // ← Requires Google login + limits to 1 response
     form.setAllowResponseEdits(true);
     form.setConfirmationMessage("✅ Thank you! You will receive a confirmation email shortly.");
@@ -145,8 +148,9 @@ function manual_runAdhocForm() {
   var formTitle = "Attendance (Makeup): Class " + CLASS_NUM + "-" + SECTION.toUpperCase() + " (" + dateStr + ")";
   var form = FormApp.create(formTitle);
   form.setDescription("Makeup form for " + dateStr);
-  form.setCollectEmail(true);
-  form.setRequireLogin(true);
+  // VERIFIED = auto-capture the signed-in account email as read-only (see note
+  // in automated_sendDailyForms). Requires Google login by definition.
+  form.setEmailCollectionType(FormApp.EmailCollectionType.VERIFIED);
   form.setAllowResponseEdits(true);
   form.setConfirmationMessage("✅ Thank you! You will receive a confirmation email shortly.");
 
