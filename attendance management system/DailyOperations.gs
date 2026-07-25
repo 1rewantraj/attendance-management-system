@@ -30,7 +30,7 @@ function automated_sendDailyForms() {
     var teacherName = teacherMapping[mapKey].name;
     var teacherEmail = teacherMapping[mapKey].email;
 
-    var ssName = "Attendance_Class_" + classNum + "_Section_" + section.toUpperCase();
+    var ssName = getWorkbookName(classNum, section);
     var existingSsArray = outputFolder.getFilesByName(ssName);
     var ss, ssFile;
 
@@ -125,7 +125,7 @@ function manual_runAdhocForm() {
   var teacherName = ADHOC_TEACHER_NAME || teacherMapping[mapKey].name;
   var teacherEmail = ADHOC_TEACHER_EMAIL || teacherMapping[mapKey].email;
 
-  var ssName = "Attendance_Class_" + CLASS_NUM + "_Section_" + SECTION.toUpperCase();
+  var ssName = getWorkbookName(CLASS_NUM, SECTION);
   var ssFiles = outputFolder.getFilesByName(ssName);
   if (!ssFiles.hasNext()) throw new Error("No workbook found");
   

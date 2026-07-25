@@ -53,7 +53,7 @@ function manual_generateSheets() {
     var fileName = file.getName();
     Logger.log(fileName);
     var info = parseClassAndSectionFromText(fileName);
-    var targetSpreadsheetName = "Class_" + info.classNum + "_" + info.section + "_" + ACADEMIC_YEAR;
+    var targetSpreadsheetName = getWorkbookName(info.classNum, info.section);
     
     if (outputFolder.getFilesByName(targetSpreadsheetName).hasNext()) {
       Logger.log("[SKIP] " + targetSpreadsheetName + " already exists.");
@@ -126,7 +126,7 @@ function manual_updateSheets() {
     if (mimeType !== MimeType.CSV && mimeType !== MimeType.MICROSOFT_EXCEL && mimeType !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" && mimeType !== MimeType.GOOGLE_SHEETS) continue;
     
     var info = parseClassAndSectionFromText(file.getName());
-    var targetSpreadsheetName = "Class_" + info.classNum + "_" + info.section + "_" + ACADEMIC_YEAR;
+    var targetSpreadsheetName = getWorkbookName(info.classNum, info.section);
     var ssFiles = outputFolder.getFilesByName(targetSpreadsheetName);
     
     if (!ssFiles.hasNext()) continue;

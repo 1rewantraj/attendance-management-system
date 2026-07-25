@@ -117,6 +117,14 @@ function parseClassAndSectionFromText(text) {
   return { classNum: classMatch ? classMatch[1] : "1", section: secMatch ? secMatch[0].toUpperCase() : "A" };
 }
 
+// SINGLE SOURCE OF TRUTH for a class workbook's file name. Both the Setup flow
+// (manual_generateSheets / manual_updateSheets) and the Daily flow
+// (automated_sendDailyForms / manual_runAdhocForm) must resolve the SAME file,
+// so they all build the name here. Keyed by class, section, and academic year.
+function getWorkbookName(classNum, section) {
+  return "Class_" + classNum + "_" + section.toString().toUpperCase() + "_" + ACADEMIC_YEAR;
+}
+
 function getAcademicMonthsList(academicYear, startMonth, endMonth) {
   var years = academicYear.split("-");
   var startYear = parseInt(years[0].trim(), 10), endYear = parseInt(years[1].trim(), 10);
