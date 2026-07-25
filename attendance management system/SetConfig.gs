@@ -15,7 +15,10 @@ var HOLIDAY_FILE_NAME = "publicHoliday";
 var ACADEMIC_YEAR = "2026-2027"; 
 var START_MONTH = 6; // 6 = June
 var END_MONTH = 4;   // 4 = April
-//var ADD_VISUALISATIONS = false; 
+// In-sheet demo charts (buildVisualizations) are deprecated in favor of the
+// Analysis_Dashboard tab. Kept defined (false) because the config validators
+// still log this flag — leaving it undefined throws a ReferenceError.
+var ADD_VISUALISATIONS = false;
 var MAX_EXECUTION_TIME = 6 * 60 * 1000; 
 
 // Alert Settings

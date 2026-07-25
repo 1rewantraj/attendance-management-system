@@ -141,13 +141,16 @@ function manual_updateSheets() {
       var monthInfo = monthsToCreate[m];
       var sheet = ss.getSheetByName(monthInfo.name);
       if (!sheet) continue;
-      
+
       var isPastMonth = (monthInfo.year < todayYear) || (monthInfo.year === todayYear && monthInfo.monthIndex < todayMonth);
       var isCurrentMonth = (monthInfo.year === todayYear && monthInfo.monthIndex === todayMonth);
       var lastRow = sheet.getLastRow();
       var existingIds = [];
       var currentStudentCount = 0;
-      
+
+      // Count existing students: scan Child ID (col B) from row 2 until the
+      // student block ends (blank ID, or Roll No. in col A is no longer numeric
+      // — i.e. we've hit the footer/CLASS AVERAGE rows).
       if (lastRow > 1) {
         var colBValues = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
         for (var k = 0; k < colBValues.length; k++) {
@@ -158,37 +161,12 @@ function manual_updateSheets() {
           } else break;
         }
       }
-      
+
+      // New students = roster entries whose Child ID (row[1]) isn't already present.
       var newEntries = csvRoster.filter(function(row) {
         return existingIds.indexOf(row[1].toString().trim()) === -1;
       });
-      
-      for (var m = 0; m < monthsToCreate.length; m++) {
-      var monthInfo = monthsToCreate[m];
-      var sheet = ss.getSheetByName(monthInfo.name);
-      if (!sheet) continue;
-      
-      var isPastMonth = (monthInfo.year < todayYear) || (monthInfo.year === todayYear && monthInfo.monthIndex < todayMonth);
-      var isCurrentMonth = (monthInfo.year === todayYear && monthInfo.monthIndex === todayMonth);
-      var lastRow = sheet.getLastRow();
-      var existingIds = [];
-      var currentStudentCount = 0;
-      
-      if (lastRow > 1) {
-        var colBValues = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
-        for (var k = 0; k < colBValues.length; k++) {
-          var id = colBValues[k][0].toString().trim();
-          if (id !== "" && !isNaN(sheet.getRange(k + 2, 1).getValue())) {
-            existingIds.push(id);
-            currentStudentCount++;
-          } else break;
-        }
-      }
-      
-      var newEntries = csvRoster.filter(function(row) {
-        return existingIds.indexOf(row[1].toString().trim()) === -1;
-      });
-      
+
       var daysInMonth = new Date(monthInfo.year, monthInfo.monthIndex + 1, 0).getDate();
       var totalStudentsNow = currentStudentCount;
 
@@ -197,13 +175,13 @@ function manual_updateSheets() {
         Logger.log("    [+] Found " + newEntries.length + " new student(s) for " + monthInfo.name);
         var insertRowIndex = currentStudentCount + 1;
         sheet.insertRowsAfter(insertRowIndex, newEntries.length);
-        
+
         for (var e = 0; e < newEntries.length; e++) newEntries[e][0] = (currentStudentCount + e + 1).toString();
-        
+
         var startRow = insertRowIndex + 1;
         sheet.getRange(startRow, 1, newEntries.length, 3).setValues(newEntries);
         totalStudentsNow = currentStudentCount + newEntries.length;
-        
+
         if (isPastMonth) {
           var pastBlock = sheet.getRange(startRow, 4, newEntries.length, daysInMonth);
           pastBlock.clearDataValidations();
@@ -219,7 +197,6 @@ function manual_updateSheets() {
       if (totalStudentsNow > 0) {
         refreshFormulasAndStyles(sheet, totalStudentsNow, daysInMonth, monthInfo.year, monthInfo.monthIndex, monthInfo.name, holidays);
       }
-    }
     }
   }
   
