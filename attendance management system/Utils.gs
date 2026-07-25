@@ -1076,6 +1076,17 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
   var props = PropertiesService.getScriptProperties();
   var notifiedKey = 'NOTIFIED_' + ssId;
 
+  // Derive a readable class label from the workbook name (e.g.
+  // "Class_5_A_2026-2027" -> "Class 5-A") so the confirmation names the class.
+  var classLabel = "your class";
+  try {
+    var wbName = SpreadsheetApp.openById(ssId).getName();
+    var parts = wbName.split("_");            // [Class, 5, A, 2026-2027]
+    if (parts.length >= 3) {
+      classLabel = parts[0] + " " + parts[1] + "-" + parts[2];
+    }
+  } catch (e) { /* fall back to generic label */ }
+
   var notified = [];
   try {
     var stored = props.getProperty(notifiedKey);
@@ -1093,9 +1104,9 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
     if (notified.indexOf(email) !== -1) continue;      // already emailed today
 
     var isAccepted = (!authorizedEmail) || (email === authorizedEmail);
-    var subject = isAccepted ? "✅ Attendance Submitted Successfully"
-                             : "❌ Attendance Submission Rejected";
-    var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit);
+    var subject = isAccepted ? "✅ Attendance Submitted Successfully — " + classLabel
+                             : "❌ Attendance Submission Rejected — " + classLabel;
+    var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel);
 
     try {
       MailApp.sendEmail({ to: email, subject: subject, htmlBody: htmlBody });
@@ -1113,12 +1124,14 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
 }
 
 // Builds the accept/reject confirmation email body sent from the hourly sync.
-function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit) {
+function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel) {
+  classLabel = classLabel || "your class";
   var headerColor = isAccepted ? "#4CAF50" : "#f44336";
   var headerText = isAccepted ? "✅ Submission Accepted" : "❌ Submission Rejected";
   var message = isAccepted
-    ? "Your attendance for " + sheetName + " (day " + dayOfMonthDigit + ") has been recorded successfully."
-    : "You are not authorized to submit attendance for this class, so your submission was not recorded." +
+    ? "Your attendance for <strong>" + classLabel + "</strong> on " + sheetName + " " + dayOfMonthDigit +
+      " has been recorded successfully."
+    : "You are not authorized to submit attendance for <strong>" + classLabel + "</strong>, so your submission was not recorded." +
       (authorizedEmail ? " Only " + authorizedEmail + " can submit for this class." : "");
 
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>';
