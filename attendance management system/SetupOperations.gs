@@ -210,8 +210,44 @@ function manual_resetExecutionTokens() {
   var props = PropertiesService.getScriptProperties();
   props.deleteProperty('FLOW1_TOKEN');
   props.deleteProperty('FLOW2_TOKEN');
-  //props.deleteProperty('FLOW3_TOKEN');
+  props.deleteProperty('FLOW3_TOKEN');
   Logger.log("✅ All execution continuation tokens cleared. Next run will start from scratch.");
+}
+
+
+// =========================================================================
+// MANUAL (admin run): FULL SYSTEM RESET — clears ALL runtime state.
+// Use this to wipe every Script Property the daily loop writes so the
+// system starts completely fresh (see RESET.md for the full procedure).
+//
+// This does NOT touch Drive files (workbooks/forms) or triggers — those are
+// deleted separately per RESET.md. It ONLY clears the Script Properties:
+//   ACTIVE_FORM_<ssId>        – which form is live for each workbook
+//   AUTHORIZED_TEACHER_<ssId> – who may submit for each workbook (this key
+//                               is otherwise never deleted → leaks over time)
+//   NOTIFIED_<ssId>           – per-day "already emailed" dedup set
+//   FLOW1_TOKEN / FLOW2_TOKEN / FLOW3_TOKEN – setup batch continuation tokens
+// =========================================================================
+function manual_resetAllRuntimeState() {
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  var deleted = 0;
+
+  for (var key in all) {
+    if (key.indexOf('ACTIVE_FORM_') === 0 ||
+        key.indexOf('AUTHORIZED_TEACHER_') === 0 ||
+        key.indexOf('NOTIFIED_') === 0 ||
+        key === 'FLOW1_TOKEN' ||
+        key === 'FLOW2_TOKEN' ||
+        key === 'FLOW3_TOKEN') {
+      props.deleteProperty(key);
+      deleted++;
+      Logger.log("🗑️ Cleared: " + key);
+    }
+  }
+
+  Logger.log("✅ Full runtime reset complete. " + deleted + " Script Properties cleared.");
+  Logger.log("ℹ️ Next: delete Drive workbooks/forms + triggers, then re-run manual_installTriggers (see RESET.md).");
 }
 
 
