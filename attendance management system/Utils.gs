@@ -1006,6 +1006,12 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
       if (respEmail === authorizedEmail) { chosenResponse = responses[ri]; break; }
     }
 
+    // Email each submitter a single accept/reject confirmation per day. Deduped
+    // by submitter email (persisted in NOTIFIED_<ssId>) so the hourly re-sync
+    // over accumulated responses emails each teacher at most once per day; the
+    // record is cleared nightly by automated_closeForms.
+    notifySubmitters(ssId, responses, authorizedEmail, sheet.getName(), dayOfMonthDigit);
+
     if (!chosenResponse) {
       Logger.log("      [SYNC][REJECTED] '" + sheet.getName() + "' day " + dayOfMonthDigit +
                  ": " + responses.length + " response(s) present but none from the authorized teacher (" +
@@ -1057,6 +1063,77 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
 function normalizeNameForMatch(value) {
   if (value === null || value === undefined) return "";
   return value.toString().replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// Emails each distinct submitter a single accept/reject confirmation per day.
+// The authorized teacher gets an "accepted" note; anyone else gets a "rejected"
+// note (their submission is not written to the sheet). Because the hourly sync
+// re-reads all accumulated responses, we persist the set of already-notified
+// emails in Script Property NOTIFIED_<ssId> and skip them on later runs, so each
+// teacher is emailed at most once per day. automated_closeForms clears this key
+// nightly, resetting the set for the next day.
+function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMonthDigit) {
+  var props = PropertiesService.getScriptProperties();
+  var notifiedKey = 'NOTIFIED_' + ssId;
+
+  var notified = [];
+  try {
+    var stored = props.getProperty(notifiedKey);
+    if (stored) notified = JSON.parse(stored);
+  } catch (e) {
+    notified = [];
+  }
+
+  var newlyNotified = false;
+
+  for (var i = 0; i < responses.length; i++) {
+    var email = responses[i].getRespondentEmail();
+    email = email ? email.toLowerCase().trim() : "";
+    if (email === "") continue;                       // no collected email -> can't notify
+    if (notified.indexOf(email) !== -1) continue;      // already emailed today
+
+    var isAccepted = (!authorizedEmail) || (email === authorizedEmail);
+    var subject = isAccepted ? "✅ Attendance Submitted Successfully"
+                             : "❌ Attendance Submission Rejected";
+    var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit);
+
+    try {
+      MailApp.sendEmail({ to: email, subject: subject, htmlBody: htmlBody });
+      notified.push(email);
+      newlyNotified = true;
+      Logger.log("      [SYNC][EMAIL] " + (isAccepted ? "accepted" : "rejected") + " notice sent to " + email);
+    } catch (err) {
+      Logger.log("      [SYNC][EMAIL][ERROR] Could not email " + email + ": " + err.message);
+    }
+  }
+
+  if (newlyNotified) {
+    props.setProperty(notifiedKey, JSON.stringify(notified));
+  }
+}
+
+// Builds the accept/reject confirmation email body sent from the hourly sync.
+function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit) {
+  var headerColor = isAccepted ? "#4CAF50" : "#f44336";
+  var headerText = isAccepted ? "✅ Submission Accepted" : "❌ Submission Rejected";
+  var message = isAccepted
+    ? "Your attendance for " + sheetName + " (day " + dayOfMonthDigit + ") has been recorded successfully."
+    : "You are not authorized to submit attendance for this class, so your submission was not recorded." +
+      (authorizedEmail ? " Only " + authorizedEmail + " can submit for this class." : "");
+
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>';
+  html += '<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">';
+  html += '<div style="max-width: 600px; margin: 20px auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">';
+  html += '<div style="background-color: ' + headerColor + '; padding: 20px; text-align: center;">';
+  html += '<h1 style="margin: 0; color: white; font-size: 24px;">' + headerText + '</h1>';
+  html += '</div>';
+  html += '<div style="padding: 30px;">';
+  html += '<p style="font-size: 16px; color: #333;">' + message + '</p>';
+  if (!isAccepted) {
+    html += '<p style="margin-top: 20px; padding: 15px; background-color: #fff3cd; border-left: 4px solid #f44336; color: #856404;">⚠️ This data was NOT saved. Contact your administrator if you believe this is an error.</p>';
+  }
+  html += '</div></div></body></html>';
+  return html;
 }
 
 /**

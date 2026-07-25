@@ -240,6 +240,9 @@ function automated_closeForms() {
       var form = FormApp.openById(activeFormId);
       form.setAcceptingResponses(false);
       props.deleteProperty('ACTIVE_FORM_' + ssId);
+      // Reset the per-day "already emailed" set so tomorrow's submitters get
+      // their one confirmation email again (see notifySubmitters in Utils.gs).
+      props.deleteProperty('NOTIFIED_' + ssId);
       Logger.log("🔒 Closed form: " + form.getTitle());
     } catch (err) {
       Logger.log("Error closing form for " + file.getName() + ": " + err.message);
