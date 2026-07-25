@@ -2,7 +2,7 @@
 // FILE 2: Attendence_Sheets_Setup.gs (Master Generation & Updates)
 // =========================================================================
 
-function generateSheetsFromDriveFolder() {
+function manual_generateSheets() {
   var startTime = Date.now();
   Logger.log("=========================================================");
   Logger.log("STEP 1: STARTING MASTER BATCH INITIAL GENERATION");
@@ -82,7 +82,7 @@ function generateSheetsFromDriveFolder() {
   Logger.log("=========================================================\n");
 }
 
-function updateSheetsFromDriveFolder() {
+function manual_updateSheets() {
   var startTime = Date.now();
   Logger.log("=========================================================");
   Logger.log("STEP 2: STARTING MID-YEAR DELTA UPDATE CHECK");
@@ -229,7 +229,7 @@ function updateSheetsFromDriveFolder() {
 
 //Execution Tokens are meant to safely batch process (do some function on) the reports without hitting Google's 6min Execution Timeout.
 // Reset the Execution Token After the full setup is done / To run everything from Scratch
-function resetExecutionTokens() {
+function manual_resetExecutionTokens() {
   var props = PropertiesService.getScriptProperties();
   props.deleteProperty('FLOW1_TOKEN');
   props.deleteProperty('FLOW2_TOKEN');
@@ -238,7 +238,7 @@ function resetExecutionTokens() {
 }
 
 
-function validateSetupConfiguration() {
+function manual_validateSetupConfig() {
   Logger.log("=========================================================");
   Logger.log("🔍 SETUP VALIDATION - Checking configuration");
   Logger.log("=========================================================\n");

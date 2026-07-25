@@ -1,7 +1,7 @@
 // =========================================================================
-// ADMIN FUNCTION 1: Daily Morning Form Distribution (6 AM Trigger)
+// AUTOMATED (6 AM daily trigger): Daily Morning Form Distribution
 // =========================================================================
-function sendDailyAttendanceForms() {
+function automated_sendDailyForms() {
   var today = new Date();
   if (isGlobalHolidayOrWeekend(today)) {
     Logger.log("⏭️ Today is a weekend or public holiday. Forms will not be sent.");
@@ -105,9 +105,9 @@ function sendDailyAttendanceForms() {
 }
 
 // =========================================================================
-// ADMIN FUNCTION 2: Ad-hoc Makeup Form Generator
+// MANUAL (admin run): Ad-hoc Makeup Form Generator
 // =========================================================================
-function runAdhocAttendanceForm() {
+function manual_runAdhocForm() {
   var CLASS_NUM = ADHOC_CLASS_NUM || "5";
   var SECTION = ADHOC_SECTION || "A";
   var TARGET_DATE_STRING = ADHOC_DATE || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MMM-yyyy");
@@ -183,9 +183,9 @@ function runAdhocAttendanceForm() {
 }
 
 // =========================================================================
-// ADMIN FUNCTION 3: Hourly Response Sync (Runs Every Hour)
+// AUTOMATED (hourly trigger): Response Sync
 // =========================================================================
-function syncFormResponsesToSheets() {
+function automated_syncResponses() {
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
   var files = outputFolder.getFiles();
   var props = PropertiesService.getScriptProperties();
@@ -221,9 +221,9 @@ function syncFormResponsesToSheets() {
 }
 
 // =========================================================================
-// ADMIN FUNCTION 4: Close All Forms at 11 PM
+// AUTOMATED (11 PM daily trigger): Close All Active Forms
 // =========================================================================
-function closeAllActiveForms() {
+function automated_closeForms() {
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
   var files = outputFolder.getFiles();
   var props = PropertiesService.getScriptProperties();
@@ -248,9 +248,9 @@ function closeAllActiveForms() {
 }
 
 // =========================================================================
-// ADMIN FUNCTION 5: Flexible Form Closer (Manual Execution)
+// MANUAL (admin run): Flexible Form Closer
 // =========================================================================
-function closeAttendanceFormFlexibly() {
+function manual_closeFormsFlexibly() {
   var FILTER_CLASS = null;
   var FILTER_SECTION = null;
   var FILTER_DATE_STRING = null;
@@ -288,9 +288,9 @@ function closeAttendanceFormFlexibly() {
 }
 
 // =========================================================================
-// ADMIN FUNCTION 6: Weekly Stakeholder Report (Fridays)
+// AUTOMATED (Friday 5 PM trigger): Weekly Stakeholder Report
 // =========================================================================
-function sendStakeholderReport() {
+function automated_sendWeeklyReport() {
   var today = new Date();
   var todayStr = Utilities.formatDate(today, Session.getScriptTimeZone(), "dd-MMM-yyyy");
   var configFolder = getFolderByLink(CONFIG_FOLDER_LINK);
@@ -362,27 +362,27 @@ function sendStakeholderReport() {
 }
 
 // =========================================================================
-// ADMIN FUNCTION 7: One-Time Trigger Installer
+// MANUAL (one-time admin run): Trigger Installer — registers each automated_* function
 // =========================================================================
-function setupAutomatedTriggers() {
-  ScriptApp.newTrigger('sendDailyAttendanceForms')
+function manual_installTriggers() {
+  ScriptApp.newTrigger('automated_sendDailyForms')
     .timeBased()
     .atHour(6)
     .everyDays(1)
     .create();
 
-  ScriptApp.newTrigger('syncFormResponsesToSheets')
+  ScriptApp.newTrigger('automated_syncResponses')
     .timeBased()
     .everyHours(1)
     .create();
 
-  ScriptApp.newTrigger('closeAllActiveForms')
+  ScriptApp.newTrigger('automated_closeForms')
     .timeBased()
     .atHour(23)
     .everyDays(1)
     .create();
 
-  ScriptApp.newTrigger('sendStakeholderReport')
+  ScriptApp.newTrigger('automated_sendWeeklyReport')
     .timeBased()
     .onWeekDay(ScriptApp.WeekDay.FRIDAY)
     .atHour(17)
@@ -392,9 +392,9 @@ function setupAutomatedTriggers() {
 }
 
 // =========================================================================
-// ADMIN FUNCTION 8: Configuration Validator
+// MANUAL (admin run): Configuration Validator
 // =========================================================================
-function validateConfiguration() {
+function manual_validateConfig() {
   var errors = [];
   
   try {
@@ -430,134 +430,4 @@ function validateConfiguration() {
   Logger.log("Academic Year: " + ACADEMIC_YEAR);
   Logger.log("Months: " + START_MONTH + " to " + END_MONTH);
   Logger.log("Visualizations: " + (ADD_VISUALISATIONS ? "Enabled" : "Disabled"));
-}
-
-// =========================================================================
-// SYSTEM TRIGGER: Form Submission Validator (AUTO-TRIGGERED)
-// =========================================================================
-function onFormSubmit(e) {
-  try {
-    var formResponse = e.response;
-    var form = FormApp.openById(e.source.getId());
-    var formId = form.getId();
-    var formTitle = form.getTitle();
-    var respondentEmail = formResponse.getRespondentEmail().toLowerCase().trim();
-    var submissionTime = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MMM-yyyy hh:mm a");
-    var props = PropertiesService.getScriptProperties();
-
-    // Extract responses
-    var itemResponses = formResponse.getItemResponses();
-    var responseData = [];
-
-    for (var i = 0; i < itemResponses.length; i++) {
-      var itemResponse = itemResponses[i];
-      if (itemResponse.getItem().getType() === FormApp.ItemType.GRID) {
-        var responses = itemResponse.getResponse();
-        var rows = itemResponse.getItem().asGridItem().getRows();
-        for (var j = 0; j < responses.length; j++) {
-          responseData.push({name: rows[j], status: responses[j]});
-        }
-      }
-    }
-
-    // Find authorized teacher
-    var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
-    var files = outputFolder.getFiles();
-    var authorizedEmail = null;
-    var className = "";
-
-    while (files.hasNext()) {
-      var file = files.next();
-      if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
-
-      var tempSsId = file.getId();
-      var storedFormId = props.getProperty('ACTIVE_FORM_' + tempSsId);
-
-      if (storedFormId === formId) {
-        authorizedEmail = props.getProperty('AUTHORIZED_TEACHER_' + tempSsId);
-        className = file.getName();
-        break;
-      }
-    }
-
-    if (!authorizedEmail) {
-      Logger.log("⚠️ No authorized teacher found");
-      return;
-    }
-
-    var isAccepted = (respondentEmail === authorizedEmail);
-
-    if (!isAccepted) {
-      form.deleteResponse(formResponse.getId());
-    }
-
-    // BUILD SIMPLIFIED EMAIL
-    var subject, headerColor, headerText, message;
-
-    if (isAccepted) {
-      subject = "✅ Attendance Submitted Successfully";
-      headerColor = "#4CAF50";
-      headerText = "✅ Submission Accepted";
-      message = "Your attendance has been recorded successfully.";
-    } else {
-      subject = "❌ Attendance Submission Rejected";
-      headerColor = "#f44336";
-      headerText = "❌ Submission Rejected";
-      message = "You are not authorized to submit attendance for this class. Only " + authorizedEmail + " can submit.";
-    }
-
-    var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>';
-    html += '<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">';
-    html += '<div style="max-width: 600px; margin: 20px auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">';
-
-    // Header
-    html += '<div style="background-color: ' + headerColor + '; padding: 20px; text-align: center;">';
-    html += '<h1 style="margin: 0; color: white; font-size: 24px;">' + headerText + '</h1>';
-    html += '</div>';
-
-    // Body
-    html += '<div style="padding: 30px;">';
-    html += '<p style="font-size: 16px; color: #333;">' + message + '</p>';
-
-    // Info Box
-    html += '<div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">';
-    html += '<p style="margin: 5px 0; color: #333;"><strong>Form:</strong> ' + formTitle + '</p>';
-    html += '<p style="margin: 5px 0; color: #333;"><strong>Submitted by:</strong> ' + respondentEmail + '</p>';
-    html += '<p style="margin: 5px 0; color: #333;"><strong>Time:</strong> ' + submissionTime + '</p>';
-    if (!isAccepted) {
-      html += '<p style="margin: 5px 0; color: #f44336;"><strong>Authorized teacher:</strong> ' + authorizedEmail + '</p>';
-    }
-    html += '</div>';
-
-    // Response Summary
-    html += '<h3 style="color: #333; font-size: 16px; margin-top: 25px;">Your Responses:</h3>';
-    html += '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
-    html += '<thead><tr style="background-color: #f0f0f0;">';
-    html += '<th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Student</th>';
-    html += '<th style="border: 1px solid #ddd; padding: 10px; text-align: center; width: 100px;">Status</th>';
-    html += '</tr></thead><tbody>';
-
-    for (var i = 0; i < responseData.length; i++) {
-      var statusColor = responseData[i].status === 'Present' ? '#4CAF50' : (responseData[i].status === 'Absent' ? '#f44336' : '#FF9800');
-      html += '<tr>';
-      html += '<td style="border: 1px solid #ddd; padding: 10px;">' + responseData[i].name + '</td>';
-      html += '<td style="border: 1px solid #ddd; padding: 10px; text-align: center; color: ' + statusColor + '; font-weight: bold;">' + responseData[i].status + '</td>';
-      html += '</tr>';
-    }
-
-    html += '</tbody></table>';
-
-    if (!isAccepted) {
-      html += '<p style="margin-top: 20px; padding: 15px; background-color: #fff3cd; border-left: 4px solid #f44336; color: #856404;">⚠️ This data was NOT saved. Contact your administrator if you believe this is an error.</p>';
-    }
-
-    html += '</div></div></body></html>';
-
-    MailApp.sendEmail({to: respondentEmail, subject: subject, htmlBody: html});
-
-    Logger.log(isAccepted ? "✅ ACCEPTED: " + respondentEmail : "🚫 REJECTED: " + respondentEmail);
-
-  } catch(error) {
-    Logger.log("❌ Error: " + error.message);
-  }
 }
