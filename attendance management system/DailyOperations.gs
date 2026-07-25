@@ -490,6 +490,43 @@ function automated_sendWeeklyReport() {
 }
 
 // =========================================================================
+// AUTOMATED (11 PM daily trigger): End-of-Day Visualization Refresh
+// -------------------------------------------------------------------------
+// Rebuilds the Analysis_Dashboard for every class workbook once at end of day,
+// so charts/metrics reflect the full day's synced attendance (including the
+// final sync done by automated_closeForms). The hourly sync also refreshes the
+// dashboard, but this guarantees a clean, complete end-of-day snapshot.
+// =========================================================================
+function automated_refreshVisualizations() {
+  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
+  var files = outputFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
+  var refreshed = 0;
+
+  while (files.hasNext()) {
+    var file = files.next();
+    try {
+      var ss = SpreadsheetApp.openById(file.getId());
+      createDashboardIfNotExists(ss);  // create if missing (also populates it)
+      updateDashboard(ss);             // recompute metrics/charts from month tabs
+      refreshed++;
+      Logger.log("📊 Refreshed dashboard: " + file.getName());
+    } catch (err) {
+      Logger.log("Error refreshing visualization for " + file.getName() + ": " + err.message);
+    }
+  }
+
+  Logger.log("✅ End-of-day visualization refresh complete. " + refreshed + " workbook(s) updated.");
+}
+
+// =========================================================================
+// MANUAL (admin run): Refresh visualizations on demand (same as the automated
+// end-of-day refresh, but runnable any time).
+// =========================================================================
+function manual_refreshVisualizations() {
+  automated_refreshVisualizations();
+}
+
+// =========================================================================
 // MANUAL (one-time admin run): Trigger Installer — registers each automated_* function
 // =========================================================================
 function manual_installTriggers() {
@@ -510,13 +547,22 @@ function manual_installTriggers() {
     .everyDays(1)
     .create();
 
+  // Runs after automated_closeForms (11 PM) so the end-of-day dashboard reflects
+  // the full day's synced attendance, including that final close-time sync.
+  ScriptApp.newTrigger('automated_refreshVisualizations')
+    .timeBased()
+    .atHour(23)
+    .nearMinute(45)
+    .everyDays(1)
+    .create();
+
   ScriptApp.newTrigger('automated_sendWeeklyReport')
     .timeBased()
     .onWeekDay(ScriptApp.WeekDay.FRIDAY)
     .atHour(17)
     .create();
 
-  Logger.log("✅ All triggers installed successfully.");
+  Logger.log("✅ All triggers installed successfully. (5 total: 6AM forms, hourly sync, 11PM close, 11:45PM viz refresh, Fri 5PM report)");
 }
 
 // =========================================================================
