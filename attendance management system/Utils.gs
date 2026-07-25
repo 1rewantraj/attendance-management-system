@@ -978,8 +978,34 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
       }
     }
 
-    // Process the latest response only (a teacher's most recent submission wins).
-    var itemResponses = responses[responses.length - 1].getItemResponses();
+    // AUTHORIZATION: only the class's assigned teacher may set attendance.
+    // We enforce this here (in the hourly sync) instead of via a per-form
+    // onFormSubmit trigger, because one form-submit trigger per class would
+    // exceed Apps Script's 20-trigger-per-user cap. Trade-off: an unauthorized
+    // submission is ignored at the next sync rather than the instant of submit.
+    var authorizedEmail = PropertiesService.getScriptProperties()
+      .getProperty('AUTHORIZED_TEACHER_' + ssId);
+    authorizedEmail = authorizedEmail ? authorizedEmail.toLowerCase().trim() : null;
+
+    // Pick the LATEST response submitted BY the authorized teacher. Scanning
+    // newest-first means an unauthorized submission can neither overwrite nor
+    // block the legitimate one.
+    var chosenResponse = null;
+    for (var ri = responses.length - 1; ri >= 0; ri--) {
+      if (!authorizedEmail) { chosenResponse = responses[ri]; break; } // no guard configured -> latest wins
+      var respEmail = responses[ri].getRespondentEmail();
+      respEmail = respEmail ? respEmail.toLowerCase().trim() : "";
+      if (respEmail === authorizedEmail) { chosenResponse = responses[ri]; break; }
+    }
+
+    if (!chosenResponse) {
+      Logger.log("      [SYNC][REJECTED] '" + sheet.getName() + "' day " + dayOfMonthDigit +
+                 ": " + responses.length + " response(s) present but none from the authorized teacher (" +
+                 (authorizedEmail || "none set") + "). Nothing written.");
+      return;
+    }
+
+    var itemResponses = chosenResponse.getItemResponses();
     var written = 0, skipped = 0;
     var skippedNames = [];
 
@@ -1007,7 +1033,8 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
     }
 
     Logger.log("      [SYNC] '" + sheet.getName() + "' day " + dayOfMonthDigit +
-               ": wrote " + written + " status(es), skipped " + skipped + ".");
+               ": wrote " + written + " status(es), skipped " + skipped +
+               " (accepted from " + (chosenResponse.getRespondentEmail() || "unknown") + ").");
     if (skipped > 0) {
       Logger.log("      [SYNC][WARNING] " + skipped + " form row(s) had no matching student in the sheet: " +
                  skippedNames.join(" | "));
