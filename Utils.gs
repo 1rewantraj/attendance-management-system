@@ -1388,7 +1388,6 @@ function updateDashboard(ss) {
   const standardWidth = 600;
   const standardHeight = 400;
   const colLeft = 13;
-  const colRight = 20;
   const rowTop = 2;
   const rowBottom = 23;
 
@@ -1415,24 +1414,6 @@ function updateDashboard(ss) {
     dashboardSheet.insertChart(momChart);
   }
 
-  if (classEndRow >= classStartRow) {
-    const classChart = dashboardSheet.newChart()
-      .asLineChart()
-      .addRange(dashboardSheet.getRange(classStartRow - 1, 1, classEndRow - classStartRow + 2, classHeaders.length))
-      .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
-      .setNumHeaders(1)
-      .setOption('title', 'Average Attendance % by Class')
-      .setOption('hAxis.title', 'Month')
-      .setOption('vAxis.title', 'Attendance %')
-      .setOption('curveType', 'function')
-      .setOption('pointSize', 5)
-      .setOption('width', standardWidth)
-      .setOption('height', standardHeight)
-      .setPosition(rowTop, colRight, 0, 0)
-      .build();
-    dashboardSheet.insertChart(classChart);
-  }
-
   if (studentEndRow >= studentStartRow) {
     const numStudents = studentEndRow - studentStartRow + 1;
     const dynamicHeight = Math.max(400, (numStudents * 25) + 100);
@@ -1453,25 +1434,6 @@ function updateDashboard(ss) {
       .setPosition(rowBottom, colLeft, 0, 0)
       .build();
     dashboardSheet.insertChart(studentChart);
-  }
-
-  if (momEndRow >= momStartRow) {
-    const ratesChart = dashboardSheet.newChart()
-      .asLineChart()
-      .addRange(dashboardSheet.getRange(momStartRow - 1, 1, momEndRow - momStartRow + 2, 1))
-      .addRange(dashboardSheet.getRange(momStartRow - 1, 6, momEndRow - momStartRow + 2, 3))
-      .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
-      .setNumHeaders(1)
-      .setOption('title', 'Attendance & Engagement Rates Trend')
-      .setOption('hAxis.title', 'Month')
-      .setOption('vAxis.title', 'Percentage (%)')
-      .setOption('pointSize', 5)
-      .setOption('colors', ['#2CA02C', '#D62728', '#FF7F0E'])
-      .setOption('width', standardWidth)
-      .setOption('height', standardHeight)
-      .setPosition(rowBottom, colRight + 1, 0, 0)
-      .build();
-    dashboardSheet.insertChart(ratesChart);
   }
 
   dashboardSheet.autoResizeColumns(1, 8);
