@@ -1282,7 +1282,10 @@ function updateDashboard(ss) {
   dashboardSheet.getRange(currentRow, 1).setValue("1. Month on Month Analysis").setFontWeight("bold").setFontSize(12);
   currentRow++;
 
-  const momHeaders = ['Month', 'Present', 'Absent', 'Late', 'Total Sessions', 'Attendance Rate (%)', 'Absenteeism Rate (%)', 'Late Rate (%)'];
+  // Columns 9-11 (Present %, Late %, Absent %) are kept CONTIGUOUS and in this
+  // exact order so the stacked chart below renders bottom->top = Present, Late,
+  // Absent. These three are % of total sessions and sum to 100%.
+  const momHeaders = ['Month', 'Present', 'Absent', 'Late', 'Total Sessions', 'Attendance Rate (%)', 'Absenteeism Rate (%)', 'Late Rate (%)', 'Present %', 'Late %', 'Absent %'];
   dashboardSheet.getRange(currentRow, 1, 1, momHeaders.length).setValues([momHeaders]).setFontWeight("bold");
   currentRow++;
 
@@ -1293,8 +1296,10 @@ function updateDashboard(ss) {
     const month = sheet.getName();
     if (momMap[month]) {
       const d = momMap[month];
+      const presentRate = d.total > 0 ? (d.present / d.total) * 100 : 0;
       momData.push([
-        month, d.present, d.absent, d.late, d.total, d.attRate.toFixed(2), d.absRate.toFixed(2), d.lateRate.toFixed(2)
+        month, d.present, d.absent, d.late, d.total, d.attRate.toFixed(2), d.absRate.toFixed(2), d.lateRate.toFixed(2),
+        presentRate.toFixed(2), d.lateRate.toFixed(2), d.absRate.toFixed(2)
       ]);
     }
   });
@@ -1388,13 +1393,21 @@ function updateDashboard(ss) {
   const rowBottom = 23;
 
   if (momEndRow >= momStartRow) {
+    // Stacked % column chart. Series order (bottom->top) follows the column
+    // order: Present % (col 9), Late % (col 10), Absent % (col 11). Colors map
+    // to that same order: green (Present), orange (Late), red (Absent).
+    const momRows = momEndRow - momStartRow + 2;  // include header row
     const momChart = dashboardSheet.newChart()
       .asColumnChart()
-      .addRange(dashboardSheet.getRange(momStartRow - 1, 1, momEndRow - momStartRow + 2, 4))
+      .addRange(dashboardSheet.getRange(momStartRow - 1, 1, momRows, 1))   // Month (x-axis)
+      .addRange(dashboardSheet.getRange(momStartRow - 1, 9, momRows, 3))   // Present %, Late %, Absent %
       .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
       .setNumHeaders(1)
-      .setOption('title', 'Month-over-Month Attendance Analysis')
-      .setOption('colors', ['#2CA02C', '#D62728', '#FF7F0E'])
+      .setOption('title', 'Month-over-Month Attendance Analysis (%)')
+      .setOption('isStacked', true)
+      .setOption('colors', ['#2CA02C', '#FF7F0E', '#D62728'])
+      .setOption('vAxis.title', 'Percentage (%)')
+      .setOption('hAxis.title', 'Month')
       .setOption('width', standardWidth)
       .setOption('height', standardHeight)
       .setPosition(rowTop, colLeft, 0, 0)
