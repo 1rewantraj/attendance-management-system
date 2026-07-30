@@ -1210,13 +1210,18 @@ function updateDashboard(ss) {
 
   const currentClassName = ss.getName().split('_').slice(0, 3).join(' ') || "Class 1A";
 
-  // 1. GET ALL MONTH TABS ONLY — exclude the dashboard itself AND any form
-  //    response tab (e.g. "Form Responses 1"). A response tab is not a month
-  //    sheet; processing it would inject garbage rows into the metrics, so it
-  //    must never be included, even temporarily/mid-day before it is cleaned up.
+  // 1. GET ALL MONTH TABS ONLY — use a WHITELIST of academic month names rather
+  //    than a blacklist. A blacklist ("exclude tabs named Form Responses*") is
+  //    fragile: any unexpected tab (e.g. "Form Responses 7", a renamed response
+  //    tab, or a stray sheet) slips through and gets processed as if it were a
+  //    month, injecting garbage rows into the metrics. Only real month tabs
+  //    (June, July, ...) are ever valid, so match against that set exactly.
+  const validMonthNames = {};
+  getAcademicMonthsList(ACADEMIC_YEAR, START_MONTH, END_MONTH).forEach(function(m) {
+    validMonthNames[m.name] = true;
+  });
   const monthSheets = ss.getSheets().filter(function(s) {
-    var n = s.getName();
-    return n !== dashboardName && n.indexOf('Form Responses') !== 0;
+    return validMonthNames[s.getName()] === true;
   });
 
   const studentMap = {};
@@ -1244,18 +1249,21 @@ function updateDashboard(ss) {
         studentMap[studentId] = { name: studentName, className: currentClassName, present: 0, late: 0, absent: 0, total: 0 };
       }
 
+      // Columns 3..N-6 are the daily status cells; the LAST 6 columns are
+      // computed summaries (No of days Present/Absent/Late, Total Attendance,
+      // Total Present, Percentage) holding NUMBERS. We must NOT let those
+      // numbers count as sessions. So a session is only ever tallied when the
+      // cell is a recognized status word — this simultaneously excludes the
+      // summary numbers, empty weekend/holiday cells, and unfilled future days.
       for (let j = 3; j < row.length; j++) {
         const status = row[j];
-        if (status && status.toString().trim() !== '') {
-          const s = status.toString().trim().toLowerCase();
+        if (!status || status.toString().trim() === '') continue;
+        const s = status.toString().trim().toLowerCase();
 
-          if (s === 'present') { monthPresent++; studentMap[studentId].present++; }
-          else if (s === 'late') { monthLate++; studentMap[studentId].late++; }
-          else if (s === 'absent') { monthAbsent++; studentMap[studentId].absent++; }
-
-          monthTotal++;
-          studentMap[studentId].total++;
-        }
+        if (s === 'present') { monthPresent++; studentMap[studentId].present++; monthTotal++; studentMap[studentId].total++; }
+        else if (s === 'late') { monthLate++; studentMap[studentId].late++; monthTotal++; studentMap[studentId].total++; }
+        else if (s === 'absent') { monthAbsent++; studentMap[studentId].absent++; monthTotal++; studentMap[studentId].total++; }
+        // any other value (summary counts, percentage) is intentionally ignored
       }
     }
 
