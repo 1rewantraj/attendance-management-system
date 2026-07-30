@@ -84,8 +84,14 @@ function automated_sendDailyForms() {
     form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
 
     var liveUrl = form.getPublishedUrl();
-    PropertiesService.getScriptProperties().setProperty('ACTIVE_FORM_' + ss.getId(), form.getId());
-    PropertiesService.getScriptProperties().setProperty('AUTHORIZED_TEACHER_' + ss.getId(), teacherEmail.toLowerCase());
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty('ACTIVE_FORM_' + ss.getId(), form.getId());
+    props.setProperty('AUTHORIZED_TEACHER_' + ss.getId(), teacherEmail.toLowerCase());
+
+    // Store the target date for this form (for consistency with on-demand forms)
+    // Format: YYYY-MM-DD for reliable parsing
+    var todayKey = Utilities.formatDate(today, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    props.setProperty('FORM_TARGET_DATE_' + form.getId(), todayKey);
 
     var alertsResult = generateAlertBlocks(ss, sheet, studentNames, today);
     var teacherAlertsHtml = alertsResult.teacherHtml || "";
@@ -108,16 +114,25 @@ function automated_sendDailyForms() {
 }
 
 // =========================================================================
-// MANUAL (admin run): Ad-hoc Makeup Form Generator
+// MANUAL (admin run): On-Demand Form Sender (for any date, class, or teacher)
 // =========================================================================
-function manual_runAdhocForm() {
-  var CLASS_NUM = ADHOC_CLASS_NUM || "5";
-  var SECTION = ADHOC_SECTION || "A";
-  var TARGET_DATE_STRING = ADHOC_DATE || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MMM-yyyy");
-  
-  var targetDate = new Date(TARGET_DATE_STRING);
+function manual_sendOnDemandForm() {
+  var CLASS_NUM = ONDEMAND_CLASS_NUM || "5";
+  var SECTION = ONDEMAND_SECTION || "A";
+
+  // Parse date: try DD-MM-YYYY format first, then fall back to today
+  var targetDate;
+  if (ONDEMAND_DATE && ONDEMAND_DATE.trim() !== "") {
+    targetDate = parseDDMMYYYY(ONDEMAND_DATE);
+    if (!targetDate) {
+      throw new Error("Invalid date format '" + ONDEMAND_DATE + "'. Use DD-MM-YYYY format (e.g., '05-07-2026' for July 5, 2026).");
+    }
+  } else {
+    targetDate = new Date(); // Today
+  }
+
   var dateStr = Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "dd-MMM-yyyy");
-  
+
   var configFolder = getFolderByLink(CONFIG_FOLDER_LINK);
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
   var teacherMapping = loadTeacherMapping();
@@ -125,8 +140,8 @@ function manual_runAdhocForm() {
 
   if (!teacherMapping[mapKey]) throw new Error("No teacher found for " + CLASS_NUM + "-" + SECTION);
 
-  var teacherName = ADHOC_TEACHER_NAME || teacherMapping[mapKey].name;
-  var teacherEmail = ADHOC_TEACHER_EMAIL || teacherMapping[mapKey].email;
+  var teacherName = ONDEMAND_TEACHER_NAME || teacherMapping[mapKey].name;
+  var teacherEmail = ONDEMAND_TEACHER_EMAIL || teacherMapping[mapKey].email;
 
   var ssName = getWorkbookName(CLASS_NUM, SECTION);
   var ssFiles = outputFolder.getFilesByName(ssName);
@@ -165,8 +180,14 @@ function manual_runAdhocForm() {
   form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
 
   var liveUrl = form.getPublishedUrl();
-  PropertiesService.getScriptProperties().setProperty('ACTIVE_FORM_' + ss.getId(), form.getId());
-  PropertiesService.getScriptProperties().setProperty('AUTHORIZED_TEACHER_' + ss.getId(), teacherEmail.toLowerCase());
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('ACTIVE_FORM_' + ss.getId(), form.getId());
+  props.setProperty('AUTHORIZED_TEACHER_' + ss.getId(), teacherEmail.toLowerCase());
+
+  // Store the target date for this form so sync knows which day column to update
+  // Format: YYYY-MM-DD for reliable parsing
+  var targetDateKey = Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  props.setProperty('FORM_TARGET_DATE_' + form.getId(), targetDateKey);
 
   var alertsResult = generateAlertBlocks(ss, sheet, studentNames, targetDate);
   var teacherAlertsHtml = alertsResult.teacherHtml || "";
@@ -204,12 +225,28 @@ function automated_syncResponses() {
 
     try {
       var ss = SpreadsheetApp.openById(ssId);
-      var today = new Date();
-      var monthName = today.toLocaleString('en-US', { month: 'long' });
-      var sheet = ss.getSheetByName(monthName);
-      if (!sheet) continue;
 
-      var dayOfMonthDigit = today.getDate();
+      // Check if this form has a stored target date (for on-demand forms)
+      var targetDateStr = props.getProperty('FORM_TARGET_DATE_' + activeFormId);
+      var targetDate;
+
+      if (targetDateStr) {
+        // On-demand form: use the stored date
+        targetDate = new Date(targetDateStr);
+        Logger.log("  [SYNC] Form " + activeFormId + " is for stored date: " + targetDateStr);
+      } else {
+        // Regular daily form: use today
+        targetDate = new Date();
+      }
+
+      var monthName = targetDate.toLocaleString('en-US', { month: 'long' });
+      var sheet = ss.getSheetByName(monthName);
+      if (!sheet) {
+        Logger.log("  [SYNC][WARNING] No sheet for month '" + monthName + "' in " + file.getName());
+        continue;
+      }
+
+      var dayOfMonthDigit = targetDate.getDate();
 
       // 1. Process attendance responses into sheet
       executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId);
@@ -222,6 +259,72 @@ function automated_syncResponses() {
       Logger.log("Error syncing " + file.getName() + ": " + err.message);
     }
   }
+}
+
+// =========================================================================
+// MANUAL (admin run): Manual Response Sync
+// =========================================================================
+function manual_syncResponses() {
+  Logger.log("=========================================================");
+  Logger.log("MANUAL SYNC: Syncing all active form responses");
+  Logger.log("=========================================================");
+
+  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
+  var files = outputFolder.getFiles();
+  var props = PropertiesService.getScriptProperties();
+  var syncCount = 0;
+
+  while (files.hasNext()) {
+    var file = files.next();
+    if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
+
+    var ssId = file.getId();
+    var activeFormId = props.getProperty('ACTIVE_FORM_' + ssId);
+    if (!activeFormId) continue;
+
+    try {
+      var ss = SpreadsheetApp.openById(ssId);
+
+      // Check if this form has a stored target date (for on-demand forms)
+      var targetDateStr = props.getProperty('FORM_TARGET_DATE_' + activeFormId);
+      var targetDate;
+
+      if (targetDateStr) {
+        // On-demand form: use the stored date
+        targetDate = new Date(targetDateStr);
+        Logger.log("--> Syncing form for " + file.getName() + " (target date: " + targetDateStr + ")");
+      } else {
+        // Regular daily form: use today
+        targetDate = new Date();
+        Logger.log("--> Syncing form for " + file.getName() + " (today)");
+      }
+
+      var monthName = targetDate.toLocaleString('en-US', { month: 'long' });
+      var sheet = ss.getSheetByName(monthName);
+      if (!sheet) {
+        Logger.log("    [WARNING] No sheet for month '" + monthName + "'. Skipping.");
+        continue;
+      }
+
+      var dayOfMonthDigit = targetDate.getDate();
+
+      // Process attendance responses into sheet
+      executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId);
+
+      // Ensure Dashboard exists & refresh metrics/charts
+      createDashboardIfNotExists(ss);
+      updateDashboard(ss);
+
+      syncCount++;
+
+    } catch (err) {
+      Logger.log("    [ERROR] Syncing " + file.getName() + ": " + err.message);
+    }
+  }
+
+  Logger.log("=========================================================");
+  Logger.log("SUCCESS: Synced " + syncCount + " form(s)");
+  Logger.log("=========================================================");
 }
 
 // =========================================================================
@@ -253,10 +356,22 @@ function automated_closeForms() {
       //    month tabs' day-columns — NOT in the "Form Responses" tab — so once
       //    this sync runs, the form and its response tab are safe to remove.
       var ss = SpreadsheetApp.openById(ssId);
-      var today = new Date();
-      var monthSheet = ss.getSheetByName(today.toLocaleString('en-US', { month: 'long' }));
+
+      // Check if this form has a stored target date (for on-demand forms)
+      var targetDateStr = props.getProperty('FORM_TARGET_DATE_' + activeFormId);
+      var targetDate;
+
+      if (targetDateStr) {
+        // On-demand form: use the stored date
+        targetDate = new Date(targetDateStr);
+      } else {
+        // Regular daily form: use today
+        targetDate = new Date();
+      }
+
+      var monthSheet = ss.getSheetByName(targetDate.toLocaleString('en-US', { month: 'long' }));
       if (monthSheet) {
-        executeSheetSyncProcessing(monthSheet, activeFormId, today.getDate(), ssId);
+        executeSheetSyncProcessing(monthSheet, activeFormId, targetDate.getDate(), ssId);
       }
 
       // 3. Unlink the form's response destination, then delete every
@@ -278,6 +393,7 @@ function automated_closeForms() {
       //    their one confirmation email again (see notifySubmitters in Utils.gs).
       props.deleteProperty('ACTIVE_FORM_' + ssId);
       props.deleteProperty('NOTIFIED_' + ssId);
+      props.deleteProperty('FORM_TARGET_DATE_' + activeFormId);
 
       Logger.log("🔒 Closed + cleaned up form: " + formTitle);
     } catch (err) {
@@ -318,6 +434,7 @@ function manual_closeFormsFlexibly() {
       if (shouldClose) {
         form.setAcceptingResponses(false);
         props.deleteProperty('ACTIVE_FORM_' + ssId);
+        props.deleteProperty('FORM_TARGET_DATE_' + activeFormId);
         Logger.log("🔒 Closed: " + formTitle);
       }
     } catch (err) {

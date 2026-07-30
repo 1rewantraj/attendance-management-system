@@ -50,8 +50,8 @@ A reset must consider three places, but **only the workbooks hold data/visualiza
 
 | Key pattern | Set by | Cleared by | Purpose |
 |-------------|--------|-----------|---------|
-| `ACTIVE_FORM_<ssId>` | `automated_sendDailyForms`, `manual_runAdhocForm` | `automated_closeForms` (nightly) | Which form is live for a workbook |
-| `AUTHORIZED_TEACHER_<ssId>` | `automated_sendDailyForms`, `manual_runAdhocForm` | ⚠️ **never** (leaks) → cleared only by reset B/C | Which teacher email may submit |
+| `ACTIVE_FORM_<ssId>` | `automated_sendDailyForms`, `manual_sendOnDemandForm` | `automated_closeForms` (nightly) | Which form is live for a workbook |
+| `AUTHORIZED_TEACHER_<ssId>` | `automated_sendDailyForms`, `manual_sendOnDemandForm` | ⚠️ **never** (leaks) → cleared only by reset B/C | Which teacher email may submit |
 | `NOTIFIED_<ssId>` | `notifySubmitters` (during sync) | `automated_closeForms` (nightly) | Per-day dedup so each teacher emailed once/day |
 | `FLOW1_TOKEN` / `FLOW2_TOKEN` / `FLOW3_TOKEN` | setup batch functions | `manual_resetExecutionTokens`, reset B/C | Batch continuation tokens (setup only) |
 

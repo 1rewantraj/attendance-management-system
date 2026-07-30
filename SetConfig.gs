@@ -36,9 +36,9 @@ var LATE_LOOKBACK_DAYS = 5;
 // Comma-separated recipients of the weekly stakeholder report. REPLACE with real emails.
 var STAKEHOLDER_EMAILS = "stakeholder1@example.com,stakeholder2@example.com";
 
-// Adhoc (makeup) Form Overrides — defaults for manual_runAdhocForm. REPLACE as needed.
-var ADHOC_CLASS_NUM = "5";
-var ADHOC_SECTION = "A";
-var ADHOC_DATE = "";
-var ADHOC_TEACHER_NAME = "Teacher Name";
-var ADHOC_TEACHER_EMAIL = "teacher@example.com";
+// On-Demand Form Defaults — defaults for manual_sendOnDemandForm. REPLACE as needed.
+var ONDEMAND_CLASS_NUM = "5";
+var ONDEMAND_SECTION = "A";
+var ONDEMAND_DATE = ""; // Leave empty for today, or use DD-MM-YYYY format: "05-07-2026" for July 5, 2026
+var ONDEMAND_TEACHER_NAME = "Teacher Name";
+var ONDEMAND_TEACHER_EMAIL = "teacher@example.com";
