@@ -1360,10 +1360,11 @@ function updateDashboard(ss) {
   dashboardSheet.getRange(currentRow, 1, 1, studentHeaders.length).setValues([studentHeaders]).setFontWeight("bold");
   currentRow++;
 
+  // Sort LOWEST attendance % first — students most at risk surface at the top.
   const sortedStudents = Object.keys(studentMap).sort((a, b) => {
     const rateA = studentMap[a].total > 0 ? (studentMap[a].present + studentMap[a].late) / studentMap[a].total : 0;
     const rateB = studentMap[b].total > 0 ? (studentMap[b].present + studentMap[b].late) / studentMap[b].total : 0;
-    return rateB - rateA;
+    return rateA - rateB;
   });
 
   const studentStartRow = currentRow;
