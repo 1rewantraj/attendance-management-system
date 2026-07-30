@@ -451,9 +451,15 @@ function automated_sendWeeklyReport() {
     var alertsResult = generateAlertBlocks(ss, sheet, studentNames, today);
     if (alertsResult.stakeholderHtml && alertsResult.stakeholderHtml !== "") {
       digestContent += '<h3 style="color: #2d3748; margin-top: 25px;">' + file.getName() + '</h3>';
-      digestContent += alertsResult.stakeholderHtml;
+      // Each workbook's chart needs a UNIQUE inline-image CID, otherwise all
+      // blocks reference the same "stakeholder_chart_cid" and the images
+      // collide / render broken. generateAlertBlocks emits the placeholder
+      // src="cid:stakeholder_chart_cid"; swap it here for a per-file CID that
+      // matches what we register in allCharts below.
+      var uniqueCid = 'stakeholder_chart_cid_' + file.getId();
+      digestContent += alertsResult.stakeholderHtml.replace('cid:stakeholder_chart_cid', 'cid:' + uniqueCid);
       if (alertsResult.stakeholderBlob) {
-        allCharts.push({ cid: 'stakeholder_chart_cid_' + file.getId(), blob: alertsResult.stakeholderBlob });
+        allCharts.push({ cid: uniqueCid, blob: alertsResult.stakeholderBlob });
       }
     }
   }

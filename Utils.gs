@@ -767,6 +767,15 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     return { validCount: validCount, windowSize: windowSize };
   }
 
+  // Student IDs (Child ID, col B) aligned to the same rows the status loop
+  // scans (row = sIdx + 2), so every flagged entry can carry its ID for the
+  // inline email roster.
+  var studentIds = [];
+  try {
+    var idVals = sheet.getRange(2, 2, studentNames.length, 1).getValues();
+    for (var ii = 0; ii < idVals.length; ii++) studentIds.push(idVals[ii][0].toString().trim());
+  } catch (e) { studentIds = []; }
+
   for (var sIdx = 0; sIdx < studentNames.length; sIdx++) {
     var rowNum = sIdx + 2; var statuses = [];
     for (var c = 0; c < validColumnsToCheck.length; c++) {
@@ -786,7 +795,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
         if (statuses[w] === "Absent") aCount++;
         if (statuses[w] === "Late") lCount++;
       }
-      teacherChartData.push({ name: studentNames[sIdx], absences: aCount, lates: lCount, total: aCount + lCount });
+      teacherChartData.push({ id: studentIds[sIdx] || "", name: studentNames[sIdx], absences: aCount, lates: lCount, total: aCount + lCount });
     }
 
     var daysToCheckAbsent = Math.min(statuses.length, ABSENT_LOOKBACK_DAYS);
@@ -798,7 +807,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     for (var i = 0; i < daysToCheckLate; i++) { if (statuses[i] === "Late") lateCount++; }
 
     if (absentCount >= ABSENT_THRESHOLD_DAYS || lateCount >= LATE_THRESHOLD_DAYS) {
-      stakeholderChartData.push({ name: studentNames[sIdx], absences: absentCount, lates: lateCount, total: absentCount + lateCount });
+      stakeholderChartData.push({ id: studentIds[sIdx] || "", name: studentNames[sIdx], absences: absentCount, lates: lateCount, total: absentCount + lateCount });
     }
   }
 
@@ -807,21 +816,40 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
 
   var MAX_CHART_STUDENTS = 20;
 
-  function getOverflowHtml(dataArray) {
-    if (dataArray.length <= MAX_CHART_STUDENTS) return "";
-    var overflowData = dataArray.slice(MAX_CHART_STUDENTS);
-    var overflowStrings = [];
-    for (var i = 0; i < overflowData.length; i++) {
-      var metrics = [];
-      if (overflowData[i].absences > 0) metrics.push(overflowData[i].absences + "A");
-      if (overflowData[i].lates > 0) metrics.push(overflowData[i].lates + "L");
-      overflowStrings.push(overflowData[i].name + " (" + metrics.join(" ") + ")");
+  // Builds a collapsible <details> block listing every flagged student in a
+  // category with their Student ID, Name and day-count. <details>/<summary> is
+  // natively collapsible in Apple Mail & Outlook; Gmail strips the toggle but
+  // still renders the list expanded — so it degrades gracefully everywhere.
+  // metricKey = 'absences' | 'lates'; only students with a positive count for
+  // that metric are listed. accent = header/border color.
+  function buildCategoryRoster(dataArray, metricKey, label, accent) {
+    var rows = dataArray.filter(function(d) { return (d[metricKey] || 0) > 0; });
+    if (rows.length === 0) return "";
+    var body = "";
+    for (var i = 0; i < rows.length; i++) {
+      var rowBg = (i % 2 === 0) ? "#ffffff" : "#f7fafc";
+      body += '<tr style="background-color:' + rowBg + ';">' +
+              '<td style="padding:6px 10px; font-size:13px; color:#4a5568; border-bottom:1px solid #edf2f7;">' + (rows[i].id || "—") + '</td>' +
+              '<td style="padding:6px 10px; font-size:13px; color:#2d3748; border-bottom:1px solid #edf2f7;">' + rows[i].name + '</td>' +
+              '<td style="padding:6px 10px; font-size:13px; color:#2d3748; text-align:center; font-weight:bold; border-bottom:1px solid #edf2f7;">' + rows[i][metricKey] + '</td>' +
+              '</tr>';
     }
-    return '<div style="margin-top: 15px; padding-top: 12px; border-top: 1px solid #e2e8f0;">' +
-           '<p style="color: #4a5568; font-size: 14px; font-weight: bold; margin-bottom: 5px;">Additional Flagged Students:</p>' +
-           '<p style="color: #718096; font-size: 13px; line-height: 1.6; margin: 0;">' +
-           overflowStrings.join(", ") +
-           '</p></div>';
+    return '<details style="margin-top:12px; border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
+           '<summary style="cursor:pointer; padding:10px 14px; background-color:' + accent + '; color:#fff; font-size:14px; font-weight:bold; list-style:none;">' +
+           label + ' (' + rows.length + ' student' + (rows.length === 1 ? '' : 's') + ') ▾</summary>' +
+           '<table style="width:100%; border-collapse:collapse;">' +
+           '<tr style="background-color:#edf2f7;">' +
+           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:left;">Student ID</th>' +
+           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:left;">Name</th>' +
+           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:center;">Days</th>' +
+           '</tr>' + body + '</table></details>';
+  }
+
+  // Two collapsible categories (Absences, Lates) covering ALL flagged students
+  // — not just the top-20 shown in the chart image.
+  function buildCollapsibleRosters(dataArray) {
+    return buildCategoryRoster(dataArray, 'absences', '🔴 Absences', '#c53030') +
+           buildCategoryRoster(dataArray, 'lates', '🟡 Lates', '#b7791f');
   }
 
   var teacherChartDisplay = teacherChartData.slice(0, MAX_CHART_STUDENTS);
@@ -838,23 +866,21 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
   if (teacherChartDisplay.length > 0) {
     var chartTitle = teacherChartData.length > MAX_CHART_STUDENTS ? "Consecutive Absences & Lates (Top " + MAX_CHART_STUDENTS + ")" : "Consecutive Absences & Lates";
     result.teacherBlob = createStackedBarChart(teacherChartDisplay, chartTitle);
-    var overflowHtml = getOverflowHtml(teacherChartData);
     result.teacherHtml = '<div style="background-color: #fff; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">' +
                          '<h3 style="color: #2d3748; margin-top: 0;">⚠️ Immediate Attention Required</h3>' +
                          '<p style="color: #718096; font-size: 14px;">The chart below highlights students currently on a consecutive streak (including mixed and skip-adjusted streaks) of absences or late arrivals.</p>' +
                          '<img src="cid:teacher_chart" style="max-width: 100%; height: auto; border-radius: 4px;">' +
-                         overflowHtml + '</div>';
+                         buildCollapsibleRosters(teacherChartData) + '</div>';
   }
 
   if (stakeholderChartDisplay.length > 0) {
     var chartTitle2 = stakeholderChartData.length > MAX_CHART_STUDENTS ? "Chronic Absences & Lates (Top " + MAX_CHART_STUDENTS + ")" : "Chronic Absences & Lates";
     result.stakeholderBlob = createStackedBarChart(stakeholderChartDisplay, chartTitle2);
-    var overflowHtml2 = getOverflowHtml(stakeholderChartData);
     result.stakeholderHtml = '<div style="background-color: #fff; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">' +
                              '<h3 style="color: #2d3748; margin-top: 0;">📉 Chronic Attendance Risks</h3>' +
                              '<p style="color: #718096; font-size: 14px;">Students with frequent absences or late arrivals over the lookback period.</p>' +
                              '<img src="cid:stakeholder_chart_cid" style="max-width: 100%; height: auto; border-radius: 4px;">' +
-                             overflowHtml2 + '</div>';
+                             buildCollapsibleRosters(stakeholderChartData) + '</div>';
   }
 
   return result;
