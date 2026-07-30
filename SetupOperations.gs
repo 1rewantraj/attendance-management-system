@@ -93,6 +93,9 @@ function manual_updateSheets() {
   var configFolder = getFolderByLink(CONFIG_FOLDER_LINK);
   
   var monthsToCreate = getAcademicMonthsList(ACADEMIC_YEAR, START_MONTH, END_MONTH);
+
+  Logger.log("--> Loading Master Configurations & Holidays...");
+  var masterConfig = buildMasterConfig(configFolder);
   var holidays = getPublicHolidays(configFolder);
   
   var props = PropertiesService.getScriptProperties();
@@ -128,14 +131,19 @@ function manual_updateSheets() {
     var info = parseClassAndSectionFromText(file.getName());
     var targetSpreadsheetName = getWorkbookName(info.classNum, info.section);
     var ssFiles = outputFolder.getFilesByName(targetSpreadsheetName);
-    
+
     if (!ssFiles.hasNext()) continue;
-    
-    var ss = SpreadsheetApp.open(ssFiles.next());
+
+    var ssFile = ssFiles.next();
+    var ss = SpreadsheetApp.open(ssFile);
     var csvRoster = parseAndNormalizeData(file);
     if (csvRoster.length === 0) continue;
-    
+
     Logger.log("--> Checking updates for: " + targetSpreadsheetName);
+
+    // Check and update permissions if needed
+    Logger.log("    [PERMISSIONS CHECK] Verifying access for teachers, leads, and managers...");
+    updatePermissionsIfNeeded(ssFile, info.classNum, info.section, masterConfig);
     
     for (var m = 0; m < monthsToCreate.length; m++) {
       var monthInfo = monthsToCreate[m];
@@ -226,6 +234,7 @@ function manual_resetExecutionTokens() {
 //   AUTHORIZED_TEACHER_<ssId> – who may submit for each workbook (this key
 //                               is otherwise never deleted → leaks over time)
 //   NOTIFIED_<ssId>           – per-day "already emailed" dedup set
+//   FORM_TARGET_DATE_<formId> – target date for on-demand forms
 //   FLOW1_TOKEN / FLOW2_TOKEN / FLOW3_TOKEN – setup batch continuation tokens
 // =========================================================================
 function manual_resetAllRuntimeState() {
@@ -237,6 +246,7 @@ function manual_resetAllRuntimeState() {
     if (key.indexOf('ACTIVE_FORM_') === 0 ||
         key.indexOf('AUTHORIZED_TEACHER_') === 0 ||
         key.indexOf('NOTIFIED_') === 0 ||
+        key.indexOf('FORM_TARGET_DATE_') === 0 ||
         key === 'FLOW1_TOKEN' ||
         key === 'FLOW2_TOKEN' ||
         key === 'FLOW3_TOKEN') {

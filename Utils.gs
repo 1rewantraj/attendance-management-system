@@ -126,7 +126,7 @@ function parseClassAndSectionFromText(text) {
 
 // SINGLE SOURCE OF TRUTH for a class workbook's file name. Both the Setup flow
 // (manual_generateSheets / manual_updateSheets) and the Daily flow
-// (automated_sendDailyForms / manual_runAdhocForm) must resolve the SAME file,
+// (automated_sendDailyForms / manual_sendOnDemandForm) must resolve the SAME file,
 // so they all build the name here. Keyed by class, section, and academic year.
 function getWorkbookName(classNum, section) {
   return "Class_" + classNum + "_" + section.toString().toUpperCase() + "_" + ACADEMIC_YEAR;
@@ -157,6 +157,50 @@ function getColLetter(col) {
     col = (col - temp - 1) / 26;
   }
   return letter;
+}
+
+/**
+ * Parse a date string in DD-MM-YYYY format (e.g., "05-07-2026" = July 5, 2026).
+ * If the input is empty or doesn't match DD-MM-YYYY, returns null (caller should use default).
+ * If format matches but date is invalid, throws an error.
+ */
+function parseDDMMYYYY(dateString) {
+  if (!dateString || dateString.trim() === "") {
+    return null;
+  }
+
+  var trimmed = dateString.trim();
+
+  // Check if format matches DD-MM-YYYY (e.g., "05-07-2026" or "30-12-2026")
+  var match = trimmed.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+
+  if (!match) {
+    // Not DD-MM-YYYY format, return null so caller can try other formats
+    return null;
+  }
+
+  var day = parseInt(match[1], 10);
+  var month = parseInt(match[2], 10);
+  var year = parseInt(match[3], 10);
+
+  // Validate ranges
+  if (month < 1 || month > 12) {
+    throw new Error("Invalid month in date '" + dateString + "'. Month must be 01-12.");
+  }
+
+  if (day < 1 || day > 31) {
+    throw new Error("Invalid day in date '" + dateString + "'. Day must be 01-31.");
+  }
+
+  // Create date (months are 0-indexed in JavaScript)
+  var date = new Date(year, month - 1, day);
+
+  // Verify the date is valid (handles cases like Feb 30)
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    throw new Error("Invalid date '" + dateString + "'. This date does not exist (e.g., Feb 30).");
+  }
+
+  return date;
 }
 
 // =========================================================================
@@ -400,6 +444,140 @@ function applyPermissionsToSpreadsheet(ssFile, classNum, section, masterConfig) 
         Logger.log("      [ERROR] Could not add Viewer (" + email + "): " + e.message);
       }
     });
+  }
+}
+
+/**
+ * Updates permissions for an existing spreadsheet by checking current access
+ * against the master config and adding any new emails that should have access.
+ * Does NOT revoke access from removed users (additive only).
+ */
+function updatePermissionsIfNeeded(ssFile, classNum, section, masterConfig) {
+  var key = classNum + "_" + section;
+  var classUsers = masterConfig.classMap[key];
+
+  // Helper to split, clean, and validate email lists
+  function cleanAndFlattenEmails(inputList) {
+    var cleanList = [];
+    if (!inputList) return cleanList;
+
+    var rawList = Array.isArray(inputList) ? inputList : [inputList];
+
+    rawList.forEach(function(item) {
+      if (!item) return;
+      String(item).split(',').forEach(function(email) {
+        var trimmed = email.trim();
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+          if (cleanList.indexOf(trimmed) === -1) {
+            cleanList.push(trimmed);
+          }
+        } else if (trimmed.length > 0) {
+          Logger.log("      [WARNING] Skipping invalid email format: " + trimmed);
+        }
+      });
+    });
+    return cleanList;
+  }
+
+  // Build list of emails that should have access
+  var rawEditors = [].concat(masterConfig.stakeholders.editors || []);
+  var rawViewers = [].concat(masterConfig.stakeholders.viewers || []);
+
+  if (classUsers) {
+    function assignScope(email, roleName) {
+      if (!email) return;
+      var scope = masterConfig.roles[roleName.toLowerCase()] || "view";
+      if (scope === "edit" || scope === "editor") {
+        rawEditors.push(email);
+      } else {
+        rawViewers.push(email);
+      }
+    }
+    assignScope(classUsers.teacher, "Teacher");
+    assignScope(classUsers.lead, "Teacher Lead");
+    assignScope(classUsers.manager, "Program Manager");
+  }
+
+  var editorsToGrant = cleanAndFlattenEmails(rawEditors);
+  var viewersToGrant = cleanAndFlattenEmails(rawViewers);
+
+  // Prevent users from being added as viewers if they should have edit access
+  viewersToGrant = viewersToGrant.filter(function(email) {
+    return editorsToGrant.indexOf(email) === -1;
+  });
+
+  // Get file owner (cannot add owner as editor/viewer)
+  var ownerEmail = "";
+  try {
+    ownerEmail = ssFile.getOwner().getEmail().toLowerCase();
+  } catch (e) {
+    Logger.log("      [WARNING] Could not fetch file owner: " + e.message);
+  }
+
+  // Get current permissions
+  var currentEditors = [];
+  var currentViewers = [];
+
+  try {
+    var editors = ssFile.getEditors();
+    editors.forEach(function(editor) {
+      currentEditors.push(editor.getEmail().toLowerCase());
+    });
+  } catch (e) {
+    Logger.log("      [WARNING] Could not fetch current editors: " + e.message);
+  }
+
+  try {
+    var viewers = ssFile.getViewers();
+    viewers.forEach(function(viewer) {
+      currentViewers.push(viewer.getEmail().toLowerCase());
+    });
+  } catch (e) {
+    Logger.log("      [WARNING] Could not fetch current viewers: " + e.message);
+  }
+
+  // Find new editors (not currently editors, and not the owner)
+  var newEditors = editorsToGrant.filter(function(email) {
+    var emailLower = email.toLowerCase();
+    return emailLower !== ownerEmail &&
+           currentEditors.indexOf(emailLower) === -1;
+  });
+
+  // Find new viewers (not currently viewers or editors, and not the owner)
+  var newViewers = viewersToGrant.filter(function(email) {
+    var emailLower = email.toLowerCase();
+    return emailLower !== ownerEmail &&
+           currentViewers.indexOf(emailLower) === -1 &&
+           currentEditors.indexOf(emailLower) === -1;
+  });
+
+  // Grant new Edit permissions
+  if (newEditors.length > 0) {
+    Logger.log("      [ADDING EDIT ACCESS] -> " + newEditors.join(", "));
+    newEditors.forEach(function(email) {
+      try {
+        ssFile.addEditor(email);
+      } catch (e) {
+        Logger.log("      [ERROR] Could not add Editor (" + email + "): " + e.message);
+      }
+    });
+  }
+
+  // Grant new View permissions
+  if (newViewers.length > 0) {
+    Logger.log("      [ADDING VIEW ACCESS] -> " + newViewers.join(", "));
+    newViewers.forEach(function(email) {
+      try {
+        ssFile.addViewer(email);
+      } catch (e) {
+        Logger.log("      [ERROR] Could not add Viewer (" + email + "): " + e.message);
+      }
+    });
+  }
+
+  // Log if no changes needed
+  if (newEditors.length === 0 && newViewers.length === 0) {
+    Logger.log("      [PERMISSIONS UP TO DATE] No new access to grant.");
   }
 }
 
