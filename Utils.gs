@@ -1210,8 +1210,14 @@ function updateDashboard(ss) {
 
   const currentClassName = ss.getName().split('_').slice(0, 3).join(' ') || "Class 1A";
 
-  // 1. GET ALL SHEETS EXCEPT THE DASHBOARD ITSELF
-  const monthSheets = ss.getSheets().filter(s => s.getName() !== dashboardName);
+  // 1. GET ALL MONTH TABS ONLY — exclude the dashboard itself AND any form
+  //    response tab (e.g. "Form Responses 1"). A response tab is not a month
+  //    sheet; processing it would inject garbage rows into the metrics, so it
+  //    must never be included, even temporarily/mid-day before it is cleaned up.
+  const monthSheets = ss.getSheets().filter(function(s) {
+    var n = s.getName();
+    return n !== dashboardName && n.indexOf('Form Responses') !== 0;
+  });
 
   const studentMap = {};
   const monthClassMap = {};
