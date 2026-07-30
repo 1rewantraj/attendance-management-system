@@ -826,7 +826,14 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
 
   var teacherChartDisplay = teacherChartData.slice(0, MAX_CHART_STUDENTS);
   var stakeholderChartDisplay = stakeholderChartData.slice(0, MAX_CHART_STUDENTS);
-  var result = { teacherHtml: "", teacherBlob: null, stakeholderHtml: "", stakeholderBlob: null };
+  // teacherData / stakeholderData expose the raw flagged-student arrays (full,
+  // not sliced to the top 20) so other consumers — e.g. the Analysis_Dashboard
+  // Section 4 — can render the same chronic-risk data without re-deriving the
+  // lookback logic. Each entry: { name, absences, lates, total }.
+  var result = {
+    teacherHtml: "", teacherBlob: null, stakeholderHtml: "", stakeholderBlob: null,
+    teacherData: teacherChartData, stakeholderData: stakeholderChartData
+  };
 
   if (teacherChartDisplay.length > 0) {
     var chartTitle = teacherChartData.length > MAX_CHART_STUDENTS ? "Consecutive Absences & Lates (Top " + MAX_CHART_STUDENTS + ")" : "Consecutive Absences & Lates";
@@ -1391,6 +1398,54 @@ function updateDashboard(ss) {
   }
   const studentEndRow = currentRow - 1;
 
+  // --- Section 4: Chronic Attendance Risks (same signal as Weekly Report) ---
+  // Reuses generateAlertBlocks so this stays identical to the Friday stakeholder
+  // email: students with >= ABSENT_THRESHOLD_DAYS absences in the last
+  // ABSENT_LOOKBACK_DAYS days, OR >= LATE_THRESHOLD_DAYS lates in the last
+  // LATE_LOOKBACK_DAYS days. Evaluated against the CURRENT month tab (the alert
+  // scan walks back into prior months on its own when the lookback needs it).
+  currentRow += 2;
+  dashboardSheet.getRange(currentRow, 1).setValue("4. Chronic Attendance Risks (Last "
+    + Math.max(ABSENT_LOOKBACK_DAYS, LATE_LOOKBACK_DAYS) + " Days)").setFontWeight("bold").setFontSize(12);
+  currentRow++;
+
+  const riskHeaders = ['Student', 'Absences', 'Lates', 'Total Flags'];
+  dashboardSheet.getRange(currentRow, 1, 1, riskHeaders.length).setValues([riskHeaders]).setFontWeight("bold");
+  currentRow++;
+
+  const riskStartRow = currentRow;
+  const riskData = [];
+
+  const currentMonthName = new Date().toLocaleString('en-US', { month: 'long' });
+  const currentMonthSheet = ss.getSheetByName(currentMonthName);
+  if (currentMonthSheet && currentMonthSheet.getLastRow() > 1) {
+    const nameRange = currentMonthSheet.getRange(2, 3, currentMonthSheet.getLastRow() - 1, 1).getValues();
+    const riskStudentNames = [];
+    nameRange.forEach(function(r) {
+      const nm = r[0].toString().trim();
+      if (nm !== '' && nm.toUpperCase().indexOf('CLASS AVERAGE') === -1 && nm.toUpperCase().indexOf('STATUS') === -1) {
+        riskStudentNames.push(nm);
+      }
+    });
+
+    if (riskStudentNames.length > 0) {
+      const alerts = generateAlertBlocks(ss, currentMonthSheet, riskStudentNames, new Date());
+      // Already sorted most-flags-first inside generateAlertBlocks.
+      (alerts.stakeholderData || []).forEach(function(d) {
+        riskData.push([d.name, d.absences, d.lates, d.total]);
+      });
+    }
+  }
+
+  if (riskData.length > 0) {
+    dashboardSheet.getRange(currentRow, 1, riskData.length, riskHeaders.length).setValues(riskData);
+    currentRow += riskData.length;
+  } else {
+    dashboardSheet.getRange(currentRow, 1).setValue("No chronic risks flagged.").setFontColor("#718096");
+    currentRow++;
+  }
+  const riskEndRow = currentRow - 1;
+
   dashboardSheet.hideColumns(9, 3);
 
   // 4. GENERATE CHARTS
@@ -1443,6 +1498,28 @@ function updateDashboard(ss) {
       .setPosition(rowBottom, colLeft, 0, 0)
       .build();
     dashboardSheet.insertChart(studentChart);
+  }
+
+  if (riskData.length > 0 && riskEndRow >= riskStartRow) {
+    // Stacked bar: Absences (col 2) + Lates (col 3) per flagged student.
+    const riskRows = riskEndRow - riskStartRow + 2;  // include header row
+    const riskChartHeight = Math.max(300, (riskData.length * 30) + 100);
+    const riskChart = dashboardSheet.newChart()
+      .asBarChart()
+      .addRange(dashboardSheet.getRange(riskStartRow - 1, 1, riskRows, 1))   // Student (y-axis)
+      .addRange(dashboardSheet.getRange(riskStartRow - 1, 2, riskRows, 2))   // Absences, Lates
+      .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
+      .setNumHeaders(1)
+      .setOption('title', 'Chronic Attendance Risks (Absences & Lates)')
+      .setOption('isStacked', true)
+      .setOption('colors', ['#D62728', '#FBBC04'])
+      .setOption('hAxis.title', 'Total Days Flagged')
+      .setOption('width', 700)
+      .setOption('height', riskChartHeight)
+      .setOption('chartArea', {left: '25%', top: '10%', width: '70%', height: '80%'})
+      .setPosition(rowBottom + 22, colLeft, 0, 0)
+      .build();
+    dashboardSheet.insertChart(riskChart);
   }
 
   dashboardSheet.autoResizeColumns(1, 8);
