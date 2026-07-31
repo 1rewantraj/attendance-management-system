@@ -215,6 +215,17 @@ function automated_syncResponses() {
   var files = outputFolder.getFiles();
   var props = PropertiesService.getScriptProperties();
 
+  // Load the master config ONCE for this pass so we can CC each class's Program
+  // Manager (resolved from the Drive config file's programManagers/teacherLeads/
+  // teacherClassMapping chain) on the submission confirmation emails. Built once
+  // — not per workbook — because it reads Excel files from Drive.
+  var syncMasterConfig = null;
+  try {
+    syncMasterConfig = buildMasterConfig(getFolderByLink(CONFIG_FOLDER_LINK));
+  } catch (cfgErr) {
+    Logger.log("  [SYNC][WARNING] Could not load master config for PM CC: " + cfgErr.message);
+  }
+
   // Track which forms/workbooks are LIVE this pass so the orphan sweep below
   // never deletes a form teachers are still submitting to (nor its active
   // response tab). Keyed by id for O(1) lookup in performOrphanCleanup.
@@ -257,8 +268,20 @@ function automated_syncResponses() {
 
       var dayOfMonthDigit = targetDate.getDate();
 
+      // Resolve this class's Program Manager email from the config: workbook
+      // name "Class_5_A_2026-2027" -> classMap key "5_A" -> .manager.
+      var managerEmail = "";
+      if (syncMasterConfig && syncMasterConfig.classMap) {
+        var wbParts = ss.getName().split("_");   // [Class, 5, A, 2026-2027]
+        if (wbParts.length >= 3) {
+          var cmKey = wbParts[1] + "_" + wbParts[2].toUpperCase();
+          var cmEntry = syncMasterConfig.classMap[cmKey];
+          if (cmEntry && cmEntry.manager) managerEmail = cmEntry.manager;
+        }
+      }
+
       // 1. Process attendance responses into sheet
-      executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId);
+      executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId, managerEmail);
 
       // 2. Ensure Dashboard exists & refresh metrics/charts
       createDashboardIfNotExists(ss);

@@ -1170,7 +1170,7 @@ function buildStakeholderDigestHtml(todayStr, digestContent) {
 // =========================================================================
 // CORE SYNC SUBROUTINE
 // =========================================================================
-function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) {
+function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId, managerEmail) {
   try {
     var form = FormApp.openById(activeFormId);
     var responses = form.getResponses();
@@ -1231,7 +1231,7 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
     // by submitter email (persisted in NOTIFIED_<ssId>) so the hourly re-sync
     // over accumulated responses emails each teacher at most once per day; the
     // record is cleared nightly by automated_closeForms.
-    notifySubmitters(ssId, responses, authorizedEmail, sheet.getName(), dayOfMonthDigit);
+    notifySubmitters(ssId, responses, authorizedEmail, sheet.getName(), dayOfMonthDigit, managerEmail);
 
     if (!chosenResponse) {
       Logger.log("      [SYNC][REJECTED] '" + sheet.getName() + "' day " + dayOfMonthDigit +
@@ -1293,7 +1293,10 @@ function normalizeNameForMatch(value) {
 // emails in Script Property NOTIFIED_<ssId> and skip them on later runs, so each
 // teacher is emailed at most once per day. automated_closeForms clears this key
 // nightly, resetting the set for the next day.
-function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMonthDigit) {
+// `managerEmail` (optional, comma-separated) is this class's Program Manager,
+// resolved from the Drive config file by the caller; when present it is CC'd on
+// every confirmation so PMs get live visibility. Falsy -> no CC.
+function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMonthDigit, managerEmail) {
   var props = PropertiesService.getScriptProperties();
   var notifiedKey = 'NOTIFIED_' + ssId;
 
@@ -1338,11 +1341,12 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
                              : "❌ Attendance Submission Rejected — " + classLabel;
     var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel, summary);
 
-    // CC the Program Managers (if configured) so they see every submission's
-    // recorded attendance alongside the teacher.
+    // CC this class's Program Manager (resolved from the Drive config file and
+    // passed in) so they see every submission's recorded attendance alongside
+    // the teacher. Empty/unset -> no CC.
     var mailOpts = { to: email, subject: subject, htmlBody: htmlBody };
-    var pmCc = (typeof PROGRAM_MANAGER_EMAILS !== 'undefined' && PROGRAM_MANAGER_EMAILS)
-      ? PROGRAM_MANAGER_EMAILS.split(",").map(function(e) { return e.trim(); }).filter(function(e) { return e !== ""; }).join(",")
+    var pmCc = managerEmail
+      ? managerEmail.split(",").map(function(e) { return e.trim(); }).filter(function(e) { return e !== ""; }).join(",")
       : "";
     if (pmCc !== "") mailOpts.cc = pmCc;
 
