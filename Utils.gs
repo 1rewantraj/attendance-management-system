@@ -37,7 +37,10 @@ function cleanupOrphanFormsAndResponseTabs(outputFolder, activeFormIds, activeSs
     var formFile = formFiles.next();
     var fid = formFile.getId();
     var title = formFile.getName();
-    if (title.indexOf("Attendance") !== 0) continue;
+    var isDailyAttendanceForm = title.indexOf("Attendance: Class ") === 0;
+    var isOnDemandAttendanceForm = title.indexOf("On-Demand Attendance Form: Class ") === 0;
+    var isLegacyMakeupForm = title.indexOf("Attendance (Makeup): Class ") === 0;
+    if (!isDailyAttendanceForm && !isOnDemandAttendanceForm && !isLegacyMakeupForm) continue;
     if (activeFormIds[fid]) continue;
 
     try {

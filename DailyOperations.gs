@@ -239,7 +239,16 @@ function automated_syncResponses() {
 
     var ssId = file.getId();
     var activeFormId = props.getProperty('ACTIVE_FORM_' + ssId);
-    if (!activeFormId) continue;
+    if (!activeFormId) {
+      try {
+        var inactiveSs = SpreadsheetApp.openById(ssId);
+        createDashboardIfNotExists(inactiveSs);
+        updateDashboard(inactiveSs);
+      } catch (dashboardErr) {
+        Logger.log("Error refreshing dashboard for " + file.getName() + ": " + dashboardErr.message);
+      }
+      continue;
+    }
 
     activeFormIds[activeFormId] = true;
     activeSsIds[ssId] = true;
@@ -327,73 +336,17 @@ function manual_syncResponses() {
 
     var ssId = file.getId();
     var activeFormId = props.getProperty('ACTIVE_FORM_' + ssId);
-    if (!activeFormId) continue;
-
-    try {
-      var ss = SpreadsheetApp.openById(ssId);
-
-      // Check if this form has a stored target date (for on-demand forms)
-      var targetDateStr = props.getProperty('FORM_TARGET_DATE_' + activeFormId);
-      var targetDate;
-
-      if (targetDateStr) {
-        // On-demand form: use the stored date
-        targetDate = new Date(targetDateStr);
-        Logger.log("--> Syncing form for " + file.getName() + " (target date: " + targetDateStr + ")");
-      } else {
-        // Regular daily form: use today
-        targetDate = new Date();
-        Logger.log("--> Syncing form for " + file.getName() + " (today)");
+    if (!activeFormId) {
+      try {
+        var inactiveSs = SpreadsheetApp.openById(ssId);
+        createDashboardIfNotExists(inactiveSs);
+        updateDashboard(inactiveSs);
+        Logger.log("--> Refreshed dashboard for " + file.getName() + " (no active form)");
+      } catch (dashboardErr) {
+        Logger.log("    [ERROR] Refreshing dashboard for " + file.getName() + ": " + dashboardErr.message);
       }
-
-      var monthName = targetDate.toLocaleString('en-US', { month: 'long' });
-      var sheet = ss.getSheetByName(monthName);
-      if (!sheet) {
-        Logger.log("    [WARNING] No sheet for month '" + monthName + "'. Skipping.");
-        continue;
-      }
-
-      var dayOfMonthDigit = targetDate.getDate();
-
-      // Process attendance responses into sheet
-      executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId);
-
-      // Ensure Dashboard exists & refresh metrics/charts
-      createDashboardIfNotExists(ss);
-      updateDashboard(ss);
-
-      syncCount++;
-
-    } catch (err) {
-      Logger.log("    [ERROR] Syncing " + file.getName() + ": " + err.message);
+      continue;
     }
-  }
-
-  Logger.log("=========================================================");
-  Logger.log("SUCCESS: Synced " + syncCount + " form(s)");
-  Logger.log("=========================================================");
-}
-
-// =========================================================================
-// MANUAL (admin run): Manual Response Sync
-// =========================================================================
-function manual_syncResponses() {
-  Logger.log("=========================================================");
-  Logger.log("MANUAL SYNC: Syncing all active form responses");
-  Logger.log("=========================================================");
-
-  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
-  var files = outputFolder.getFiles();
-  var props = PropertiesService.getScriptProperties();
-  var syncCount = 0;
-
-  while (files.hasNext()) {
-    var file = files.next();
-    if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
-
-    var ssId = file.getId();
-    var activeFormId = props.getProperty('ACTIVE_FORM_' + ssId);
-    if (!activeFormId) continue;
 
     try {
       var ss = SpreadsheetApp.openById(ssId);
