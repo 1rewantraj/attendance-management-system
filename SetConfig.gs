@@ -36,6 +36,11 @@ var LATE_LOOKBACK_DAYS = 5;
 // Comma-separated recipients of the weekly stakeholder report. REPLACE with real emails.
 var STAKEHOLDER_EMAILS = "stakeholder1@example.com,stakeholder2@example.com";
 
+// Comma-separated Program Managers CC'd on every attendance-submission
+// confirmation email (accept AND reject) so they have live visibility into
+// what was recorded per class. Leave empty ("") to disable the CC. REPLACE.
+var PROGRAM_MANAGER_EMAILS = "";
+
 // On-Demand Form Defaults — defaults for manual_sendOnDemandForm. REPLACE as needed.
 var ONDEMAND_CLASS_NUM = "5";
 var ONDEMAND_SECTION = "A";

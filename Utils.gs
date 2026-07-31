@@ -1338,8 +1338,16 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
                              : "❌ Attendance Submission Rejected — " + classLabel;
     var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel, summary);
 
+    // CC the Program Managers (if configured) so they see every submission's
+    // recorded attendance alongside the teacher.
+    var mailOpts = { to: email, subject: subject, htmlBody: htmlBody };
+    var pmCc = (typeof PROGRAM_MANAGER_EMAILS !== 'undefined' && PROGRAM_MANAGER_EMAILS)
+      ? PROGRAM_MANAGER_EMAILS.split(",").map(function(e) { return e.trim(); }).filter(function(e) { return e !== ""; }).join(",")
+      : "";
+    if (pmCc !== "") mailOpts.cc = pmCc;
+
     try {
-      MailApp.sendEmail({ to: email, subject: subject, htmlBody: htmlBody });
+      MailApp.sendEmail(mailOpts);
       notified.push(email);
       newlyNotified = true;
       Logger.log("      [SYNC][EMAIL] " + (isAccepted ? "ACCEPTED" : "REJECTED") + " notice sent to " + email +
