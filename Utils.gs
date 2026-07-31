@@ -21,6 +21,77 @@ function getFolderByLink(url) {
 }
 
 // =========================================================================
+// SHARED: Orphan Form + Response-Tab Cleanup (folder scan)
+// -------------------------------------------------------------------------
+// Removes orphan attendance forms and response tabs while preserving IDs in
+// activeFormIds and activeSsIds. Pass empty maps to clean everything.
+// Performs a final attendance sync before trashing each linked form.
+// =========================================================================
+function cleanupOrphanFormsAndResponseTabs(outputFolder, activeFormIds, activeSsIds) {
+  activeFormIds = activeFormIds || {};
+  activeSsIds = activeSsIds || {};
+  var formsDeleted = 0, tabsDeleted = 0;
+
+  var formFiles = outputFolder.getFilesByType(MimeType.GOOGLE_FORMS);
+  while (formFiles.hasNext()) {
+    var formFile = formFiles.next();
+    var fid = formFile.getId();
+    var title = formFile.getName();
+    if (title.indexOf("Attendance") !== 0) continue;
+    if (activeFormIds[fid]) continue;
+
+    try {
+      var form = FormApp.openById(fid);
+      form.setAcceptingResponses(false);
+
+      var destId = null;
+      try { destId = form.getDestinationId(); } catch (e) { destId = null; }
+      if (destId) {
+        try {
+          var ss = SpreadsheetApp.openById(destId);
+          var today = new Date();
+          var monthSheet = ss.getSheetByName(today.toLocaleString('en-US', { month: 'long' }));
+          if (monthSheet) {
+            executeSheetSyncProcessing(monthSheet, fid, today.getDate(), destId);
+          }
+        } catch (e2) {
+          Logger.log("   [WARN] Final sync failed for " + title + ": " + e2.message);
+        }
+      }
+      try { form.removeDestination(); } catch (e3) { /* ignore */ }
+    } catch (eForm) {
+      Logger.log("   [WARN] Could not open form " + title + ": " + eForm.message);
+    }
+
+    formFile.setTrashed(true);
+    formsDeleted++;
+    Logger.log("🧹 Trashed orphan form file: " + title);
+  }
+
+  var sheetFiles = outputFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
+  while (sheetFiles.hasNext()) {
+    var sf = sheetFiles.next();
+    if (activeSsIds[sf.getId()]) continue;
+    try {
+      var wb = SpreadsheetApp.openById(sf.getId());
+      var tabs = wb.getSheets();
+      for (var s = 0; s < tabs.length; s++) {
+        var tabName = tabs[s].getName();
+        if (tabName.indexOf('Form Responses') === 0 && wb.getSheets().length > 1) {
+          wb.deleteSheet(tabs[s]);
+          tabsDeleted++;
+          Logger.log("🧹 Deleted orphan response tab '" + tabName + "' in " + sf.getName());
+        }
+      }
+    } catch (eWb) {
+      Logger.log("   [WARN] Could not clean workbook " + sf.getName() + ": " + eWb.message);
+    }
+  }
+
+  return { formsDeleted: formsDeleted, tabsDeleted: tabsDeleted };
+}
+
+// =========================================================================
 // COMPREHENSIVE SEARCH & UTILITIES
 // =========================================================================
 function comprehensiveFileSearch(keyword, folder) {
@@ -1818,4 +1889,3 @@ function updateDashboard(ss) {
   dashboardSheet.autoResizeColumns(1, 8);
   Logger.log("Successfully updated 'Analysis_Dashboard' for: " + ss.getName());
 }
-

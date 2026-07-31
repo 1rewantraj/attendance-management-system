@@ -89,7 +89,7 @@ sync skips workbooks with no `ACTIVE_FORM_`, so capture today's data now.)
 
 ### B2. Close any live forms
 
-Run `manual_closeFormsFlexibly()` (leave filters `null`) to stop all forms accepting
+Run `manual_closeOnDemandForm()` (leave filters `null`) to stop all forms accepting
 responses.
 
 ### B3. Clear runtime Script Properties
@@ -126,7 +126,7 @@ Only for starting a **brand-new academic year** or rebuilding a broken setup. Th
 
 1. Delete the 4 triggers (Triggers page): `automated_sendDailyForms`,
    `automated_syncResponses`, `automated_closeForms`, `automated_sendWeeklyReport`.
-2. `manual_closeFormsFlexibly()` — close live forms.
+2. `manual_closeOnDemandForm()` — close live forms.
 3. In the output folder, delete **all** `Class_<n>_<SEC>_<year>` workbooks (this
    removes their history + `Analysis_Dashboard`) and all `Attendance: …` forms.
    Empty **Trash** so regenerated names don't conflict. *(Do NOT delete rosters or
@@ -148,5 +148,5 @@ Only for starting a **brand-new academic year** or rebuilding a broken setup. Th
 | Goal | Do this |
 |------|---------|
 | **Normal fresh start tomorrow** (keep data) | Nothing — the 11 PM + 6 AM cycle handles it. |
-| **Clean runtime state** but keep all data/visualizations | **B:** `automated_syncResponses()` → `manual_closeFormsFlexibly()` → `manual_resetAllRuntimeState()` |
+| **Clean runtime state** but keep all data/visualizations | **B:** `automated_syncResponses()` → `manual_closeOnDemandForm()` → `manual_resetAllRuntimeState()` |
 | **Start a brand-new academic year** (data will be lost) | **C:** delete triggers → delete workbooks/forms → `manual_resetAllRuntimeState()` → validate → `manual_generateSheets()` → `manual_installTriggers()` |

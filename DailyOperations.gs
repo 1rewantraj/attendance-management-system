@@ -160,7 +160,8 @@ function manual_sendOnDemandForm() {
     }
   }
 
-  var formTitle = "Attendance (Makeup): Class " + CLASS_NUM + "-" + SECTION.toUpperCase() + " (" + dateStr + ")";
+  var formTitleDate = Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "dd-MM-yyyy");
+  var formTitle = "On-Demand Attendance Form: Class " + CLASS_NUM + "-" + SECTION.toUpperCase() + " (" + formTitleDate + ")";
   var form = FormApp.create(formTitle);
   form.setDescription("Makeup form for " + dateStr);
   // VERIFIED = auto-capture the signed-in account email as read-only (see note
@@ -228,7 +229,7 @@ function automated_syncResponses() {
 
   // Track which forms/workbooks are LIVE this pass so the orphan sweep below
   // never deletes a form teachers are still submitting to (nor its active
-  // response tab). Keyed by id for O(1) lookup in performOrphanCleanup.
+  // response tab). Keyed by id for O(1) lookup during the orphan sweep.
   var activeFormIds = {};
   var activeSsIds = {};
 
@@ -297,7 +298,7 @@ function automated_syncResponses() {
   //    nightly automated_closeForms runs (e.g. after a form was manually
   //    closed or its ACTIVE_FORM_ pointer was cleared).
   try {
-    var swept = performOrphanCleanup(outputFolder, activeFormIds, activeSsIds);
+    var swept = cleanupOrphanFormsAndResponseTabs(outputFolder, activeFormIds, activeSsIds);
     if (swept.formsDeleted > 0 || swept.tabsDeleted > 0) {
       Logger.log("🧹 Sync sweep: trashed " + swept.formsDeleted +
                  " orphan form(s), deleted " + swept.tabsDeleted + " orphan tab(s).");
@@ -527,9 +528,9 @@ function automated_closeForms() {
 }
 
 // =========================================================================
-// MANUAL (admin run): Flexible Form Closer
+// MANUAL (admin run): Close On-Demand Form
 // =========================================================================
-function manual_closeFormsFlexibly() {
+function manual_closeOnDemandForm() {
   var FILTER_CLASS = null;
   var FILTER_SECTION = null;
   var FILTER_DATE_STRING = null;
@@ -565,94 +566,25 @@ function manual_closeFormsFlexibly() {
       Logger.log("Error: " + err.message);
     }
   }
-}
 
-// =========================================================================
-// SHARED: Orphan Form + Response-Tab Cleanup (folder scan)
-// -------------------------------------------------------------------------
-// Removes ORPHANS by scanning the output folder, independent of any Script
-// Property: attendance Form FILES that are no longer live, and stray
-// "Form Responses N" TABS left behind in workbooks.
-//
-// LIVE PRESERVATION: pass activeFormIds / activeSsIds (maps keyed by id) to
-// protect forms/tabs that are still in use TODAY — the hourly sync passes the
-// current ACTIVE_FORM_ set so it never deletes a form teachers are still
-// submitting to, nor the response tab that form is actively appending to.
-// Pass empty maps ({}, {}) to nuke everything (the manual full cleanup).
-//
-// Data-safe: for each form still linked to a workbook it runs a final sync
-// (writing attendance into the month tabs) BEFORE trashing the form. Attendance
-// lives in the month tabs — never in the "Form Responses" tab — so nothing is
-// lost. Returns { formsDeleted, tabsDeleted }.
-// =========================================================================
-function performOrphanCleanup(outputFolder, activeFormIds, activeSsIds) {
-  activeFormIds = activeFormIds || {};
-  activeSsIds = activeSsIds || {};
-  var formsDeleted = 0, tabsDeleted = 0;
-
-  // 1. Trash orphan Attendance Form files (skip any that are still live).
-  var formFiles = outputFolder.getFilesByType(MimeType.GOOGLE_FORMS);
-  while (formFiles.hasNext()) {
-    var formFile = formFiles.next();
-    var fid = formFile.getId();
-    var title = formFile.getName();
-    // Only touch attendance forms this system generates.
-    if (title.indexOf("Attendance") !== 0) continue;
-    // Never delete a form that is still the active form for some workbook.
-    if (activeFormIds[fid]) continue;
-
-    try {
-      var form = FormApp.openById(fid);
-      form.setAcceptingResponses(false);
-
-      // Final sync if the form is linked to a workbook we can resolve.
-      var destId = null;
-      try { destId = form.getDestinationId(); } catch (e) { destId = null; }
-      if (destId) {
-        try {
-          var ss = SpreadsheetApp.openById(destId);
-          var today = new Date();
-          var monthSheet = ss.getSheetByName(today.toLocaleString('en-US', { month: 'long' }));
-          if (monthSheet) {
-            executeSheetSyncProcessing(monthSheet, fid, today.getDate(), destId);
-          }
-        } catch (e2) {
-          Logger.log("   [WARN] Final sync failed for " + title + ": " + e2.message);
-        }
-      }
-      try { form.removeDestination(); } catch (e3) { /* ignore */ }
-    } catch (eForm) {
-      Logger.log("   [WARN] Could not open form " + title + ": " + eForm.message);
-    }
-
-    formFile.setTrashed(true);
-    formsDeleted++;
-    Logger.log("🧹 Trashed orphan form file: " + title);
-  }
-
-  // 2. Delete leftover "Form Responses N" tabs. Skip workbooks that still have
-  //    a live form — that form legitimately owns its response tab until close.
-  var sheetFiles = outputFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
-  while (sheetFiles.hasNext()) {
-    var sf = sheetFiles.next();
-    if (activeSsIds[sf.getId()]) continue;
-    try {
-      var wb = SpreadsheetApp.openById(sf.getId());
-      var tabs = wb.getSheets();
-      for (var s = 0; s < tabs.length; s++) {
-        var tabName = tabs[s].getName();
-        if (tabName.indexOf('Form Responses') === 0 && wb.getSheets().length > 1) {
-          wb.deleteSheet(tabs[s]);
-          tabsDeleted++;
-          Logger.log("🧹 Deleted orphan response tab '" + tabName + "' in " + sf.getName());
-        }
-      }
-    } catch (eWb) {
-      Logger.log("   [WARN] Could not clean workbook " + sf.getName() + ": " + eWb.message);
+  // Remove forms and response tabs that are no longer associated with an
+  // active form, while preserving any forms excluded by the filters above.
+  var activeFormIds = {};
+  var activeSsIds = {};
+  var remainingFiles = outputFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
+  while (remainingFiles.hasNext()) {
+    var remainingFile = remainingFiles.next();
+    var remainingSsId = remainingFile.getId();
+    var remainingFormId = props.getProperty('ACTIVE_FORM_' + remainingSsId);
+    if (remainingFormId) {
+      activeFormIds[remainingFormId] = true;
+      activeSsIds[remainingSsId] = true;
     }
   }
 
-  return { formsDeleted: formsDeleted, tabsDeleted: tabsDeleted };
+  var cleaned = cleanupOrphanFormsAndResponseTabs(outputFolder, activeFormIds, activeSsIds);
+  Logger.log("🧹 Cleanup complete. Forms trashed: " + cleaned.formsDeleted +
+             ", response tabs deleted: " + cleaned.tabsDeleted + ".");
 }
 
 // =========================================================================
@@ -665,7 +597,7 @@ function performOrphanCleanup(outputFolder, activeFormIds, activeSsIds) {
 function manual_cleanupOrphanForms() {
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
 
-  var res = performOrphanCleanup(outputFolder, {}, {});
+  var res = cleanupOrphanFormsAndResponseTabs(outputFolder, {}, {});
 
   // Clear any lingering ACTIVE_FORM_ / NOTIFIED_ pointers (now dangling).
   var props = PropertiesService.getScriptProperties();
