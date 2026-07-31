@@ -420,6 +420,18 @@ function automated_closeForms() {
         executeSheetSyncProcessing(monthSheet, activeFormId, targetDate.getDate(), ssId);
       }
 
+      // 2b. Refresh the dashboard so it reflects THIS final close-time sync.
+      //     The hourly sync refreshes dashboards during the day, but only while a
+      //     form is active; once we clear ACTIVE_FORM_ below, nothing else would
+      //     pick up the responses just written above. Doing it here removes the
+      //     need for a separate end-of-day refresh pass.
+      try {
+        createDashboardIfNotExists(ss);
+        updateDashboard(ss);
+      } catch (vizErr) {
+        Logger.log("   [WARN] Dashboard refresh failed for " + file.getName() + ": " + vizErr.message);
+      }
+
       // 3. Unlink the form's response destination, then delete every
       //    "Form Responses N" tab (they accumulate one per day otherwise).
       try { form.removeDestination(); } catch (e) { /* not always linkable; ignore */ }
@@ -683,43 +695,6 @@ function automated_sendWeeklyReport() {
 }
 
 // =========================================================================
-// AUTOMATED (11 PM daily trigger): End-of-Day Visualization Refresh
-// -------------------------------------------------------------------------
-// Rebuilds the Analysis_Dashboard for every class workbook once at end of day,
-// so charts/metrics reflect the full day's synced attendance (including the
-// final sync done by automated_closeForms). The hourly sync also refreshes the
-// dashboard, but this guarantees a clean, complete end-of-day snapshot.
-// =========================================================================
-function automated_refreshVisualizations() {
-  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
-  var files = outputFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
-  var refreshed = 0;
-
-  while (files.hasNext()) {
-    var file = files.next();
-    try {
-      var ss = SpreadsheetApp.openById(file.getId());
-      createDashboardIfNotExists(ss);  // create if missing (also populates it)
-      updateDashboard(ss);             // recompute metrics/charts from month tabs
-      refreshed++;
-      Logger.log("📊 Refreshed dashboard: " + file.getName());
-    } catch (err) {
-      Logger.log("Error refreshing visualization for " + file.getName() + ": " + err.message);
-    }
-  }
-
-  Logger.log("✅ End-of-day visualization refresh complete. " + refreshed + " workbook(s) updated.");
-}
-
-// =========================================================================
-// MANUAL (admin run): Refresh visualizations on demand (same as the automated
-// end-of-day refresh, but runnable any time).
-// =========================================================================
-function manual_refreshVisualizations() {
-  automated_refreshVisualizations();
-}
-
-// =========================================================================
 // MANUAL (one-time admin run): Trigger Installer — registers each automated_* function
 // =========================================================================
 function manual_installTriggers() {
@@ -734,18 +709,11 @@ function manual_installTriggers() {
     .everyHours(1)
     .create();
 
+  // 11 PM close does a final sync AND refreshes each dashboard, so the
+  // end-of-day snapshot is complete without a separate refresh pass.
   ScriptApp.newTrigger('automated_closeForms')
     .timeBased()
     .atHour(23)
-    .everyDays(1)
-    .create();
-
-  // Runs after automated_closeForms (11 PM) so the end-of-day dashboard reflects
-  // the full day's synced attendance, including that final close-time sync.
-  ScriptApp.newTrigger('automated_refreshVisualizations')
-    .timeBased()
-    .atHour(23)
-    .nearMinute(45)
     .everyDays(1)
     .create();
 
@@ -755,7 +723,7 @@ function manual_installTriggers() {
     .atHour(17)
     .create();
 
-  Logger.log("✅ All triggers installed successfully. (5 total: 6AM forms, hourly sync, 11PM close, 11:45PM viz refresh, Fri 5PM report)");
+  Logger.log("✅ All triggers installed successfully. (4 total: 6AM forms, hourly sync, 11PM close+refresh, Fri 5PM report)");
 }
 
 // =========================================================================
