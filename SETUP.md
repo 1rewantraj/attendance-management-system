@@ -126,8 +126,10 @@ That's it. The system is now live.
 You don't touch anything day to day. Behind the scenes:
 
 - **6:00 AM every day** — a fresh attendance form is emailed to each teacher.
-- **Every hour** — new responses are saved into the spreadsheets and charts update.
-- **11:00 PM every day** — the day's forms are closed.
+- **Every hour** — new responses are saved into the spreadsheets, the dashboards
+  refresh, and leftover forms / stray response tabs are tidied up automatically.
+- **11:00 PM every day** — a final sync runs, the dashboards refresh once more, and
+  the day's forms are closed.
 - **Every Friday, 5:00 PM** — a summary report is emailed to the stakeholders.
 
 Weekends and the holidays you listed are skipped automatically.

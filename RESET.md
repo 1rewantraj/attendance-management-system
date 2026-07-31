@@ -30,7 +30,7 @@ A reset must consider three places, but **only the workbooks hold data/visualiza
 | Where | What lives there | Deleting it loses data? |
 |-------|------------------|-------------------------|
 | **Attendance workbooks** (Drive) | All attendance history (day-columns) + `Analysis_Dashboard` visualizations | ✅ **YES — keep these for A & B** |
-| **Generated Form files** (Drive) | The daily/makeup form UI (intermediate; already-synced marks are in the workbook) | ❌ No — safe to delete once synced |
+| **Generated Form files** (Drive) | The daily/on-demand form UI (intermediate; already-synced marks are in the workbook) | ❌ No — safe to delete once synced |
 | **Script Properties** | Runtime pointers & dedup flags (no attendance data) | ❌ No |
 | **Triggers** | The 4 time-based automations | ❌ No |
 
@@ -40,7 +40,10 @@ A reset must consider three places, but **only the workbooks hold data/visualiza
 |----------|--------|---------|
 | Attendance workbook (**KEEP for A/B**) | `Class_<classNum>_<SECTION>_<ACADEMIC_YEAR>` | `Class_1_A_2026-2027` |
 | Daily form | `Attendance: Class <classNum>-<SECTION> (<dd-MMM-yyyy>)` | `Attendance: Class 1-A (25-Jul-2026)` |
-| Makeup form | `Attendance (Makeup): Class <classNum>-<SECTION> (<dd-MMM-yyyy>)` | `Attendance (Makeup): Class 5-A (25-Jul-2026)` |
+| On-demand (makeup) form | `On-Demand Attendance Form: Class <classNum>-<SECTION> (<dd-MMM-yyyy>)` | `On-Demand Attendance Form: Class 5-A (25-Jul-2026)` |
+
+> ℹ️ Older forms named `Attendance (Makeup): Class …` may still exist from earlier
+> runs; the cleanup routines recognize and trash that legacy name too.
 
 - `<SECTION>` is always **UPPERCASE** (`A`, `B`, `C`).
 - `<ACADEMIC_YEAR>` comes from `ACADEMIC_YEAR` in `SetConfig.gs` (currently `2026-2027`).
@@ -53,16 +56,22 @@ A reset must consider three places, but **only the workbooks hold data/visualiza
 | `ACTIVE_FORM_<ssId>` | `automated_sendDailyForms`, `manual_sendOnDemandForm` | `automated_closeForms` (nightly) | Which form is live for a workbook |
 | `AUTHORIZED_TEACHER_<ssId>` | `automated_sendDailyForms`, `manual_sendOnDemandForm` | ⚠️ **never** (leaks) → cleared only by reset B/C | Which teacher email may submit |
 | `NOTIFIED_<ssId>` | `notifySubmitters` (during sync) | `automated_closeForms` (nightly) | Per-day dedup so each teacher emailed once/day |
+| `FORM_TARGET_DATE_<formId>` | `manual_sendOnDemandForm` | `manual_closeOnDemandForm`, reset B/C | Which past date an on-demand (makeup) form records for |
 | `FLOW1_TOKEN` / `FLOW2_TOKEN` / `FLOW3_TOKEN` | setup batch functions | `manual_resetExecutionTokens`, reset B/C | Batch continuation tokens (setup only) |
 
 ---
 
 ## A. Daily reset (automatic — for reference)
 
+Every **hour** the `automated_syncResponses` trigger writes new responses into the
+workbooks, **refreshes each `Analysis_Dashboard`**, and **sweeps orphan forms and
+stray `Form Responses` tabs** (preserving anything still live).
+
 At **11 PM** the `automated_closeForms` trigger, for each workbook with a live form:
 
-1. Stops the form accepting responses.
-2. Deletes `ACTIVE_FORM_<ssId>` and `NOTIFIED_<ssId>`.
+1. Does a final sync and **refreshes the dashboard** (so the end-of-day snapshot is complete).
+2. Stops the form accepting responses.
+3. Deletes `ACTIVE_FORM_<ssId>` and `NOTIFIED_<ssId>`.
 
 At **6 AM** `automated_sendDailyForms` creates a **new** form for the day and
 **reuses the existing workbook** — new marks append into today's day-column. **All
@@ -102,9 +111,15 @@ dashboard remain intact.** Confirm the `✅ Full runtime reset complete.` log li
 
 ### B4. (Optional) Tidy up old form files
 
-You may delete the closed **Form files** (`Attendance: Class …` / `Attendance
-(Makeup): Class …`) from the output folder to reduce clutter. This is **safe** — the
-marks are already in the workbooks. **Do not delete the `Class_… ` workbooks.**
+You may delete the closed **Form files** (`Attendance: Class …` / `On-Demand
+Attendance Form: Class …`) from the output folder to reduce clutter. This is
+**safe** — the marks are already in the workbooks. **Do not delete the `Class_… `
+workbooks.**
+
+Instead of deleting by hand, run **`manual_cleanupOrphanForms()`** — it trashes every
+attendance form and stray `Form Responses` tab in the output folder and clears any
+dangling `ACTIVE_FORM_` / `NOTIFIED_` pointers. (The hourly sync already does this
+automatically for anything no longer live.)
 
 ### B5. Confirm triggers are installed
 
