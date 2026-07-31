@@ -896,7 +896,15 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
   );
 
   var validColumnsToCheck = [];
-  var checkDayOffset = today.getDate() - 1;
+  // Start the backward lookback at TODAY (not today-1). Today's marks must count
+  // toward the streaks/lookback windows, otherwise a student absent/late for the
+  // last N school days *including today* is undercounted by one and slips below
+  // the threshold — e.g. 3 consecutive lates read as 2 (never alerted), and an
+  // absence alert appears to require 4 days when the threshold is 3. When this
+  // runs before today's column is marked (e.g. the 6 AM daily send) today's cell
+  // has no Present/Absent/Late value, so isInstructionalDay() rejects it and it
+  // is skipped harmlessly — the count only includes today once attendance exists.
+  var checkDayOffset = today.getDate();
   var scanSheet = sheet, scanMonthObj = new Date(today.getTime());
 
   while (validColumnsToCheck.length < MAX_LOOKBACK) {
@@ -945,6 +953,15 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     return { validCount: validCount, windowSize: windowSize };
   }
 
+  // Student IDs (Child ID, col B) aligned to the same rows the status loop
+  // scans (row = sIdx + 2), so every flagged entry can carry its ID for the
+  // inline email roster.
+  var studentIds = [];
+  try {
+    var idVals = sheet.getRange(2, 2, studentNames.length, 1).getValues();
+    for (var ii = 0; ii < idVals.length; ii++) studentIds.push(idVals[ii][0].toString().trim());
+  } catch (e) { studentIds = []; }
+
   for (var sIdx = 0; sIdx < studentNames.length; sIdx++) {
     var rowNum = sIdx + 2; var statuses = [];
     for (var c = 0; c < validColumnsToCheck.length; c++) {
@@ -964,7 +981,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
         if (statuses[w] === "Absent") aCount++;
         if (statuses[w] === "Late") lCount++;
       }
-      teacherChartData.push({ name: studentNames[sIdx], absences: aCount, lates: lCount, total: aCount + lCount });
+      teacherChartData.push({ id: studentIds[sIdx] || "", name: studentNames[sIdx], absences: aCount, lates: lCount, total: aCount + lCount });
     }
 
     var daysToCheckAbsent = Math.min(statuses.length, ABSENT_LOOKBACK_DAYS);
@@ -976,7 +993,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     for (var i = 0; i < daysToCheckLate; i++) { if (statuses[i] === "Late") lateCount++; }
 
     if (absentCount >= ABSENT_THRESHOLD_DAYS || lateCount >= LATE_THRESHOLD_DAYS) {
-      stakeholderChartData.push({ name: studentNames[sIdx], absences: absentCount, lates: lateCount, total: absentCount + lateCount });
+      stakeholderChartData.push({ id: studentIds[sIdx] || "", name: studentNames[sIdx], absences: absentCount, lates: lateCount, total: absentCount + lateCount });
     }
   }
 
@@ -985,47 +1002,71 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
 
   var MAX_CHART_STUDENTS = 20;
 
-  function getOverflowHtml(dataArray) {
-    if (dataArray.length <= MAX_CHART_STUDENTS) return "";
-    var overflowData = dataArray.slice(MAX_CHART_STUDENTS);
-    var overflowStrings = [];
-    for (var i = 0; i < overflowData.length; i++) {
-      var metrics = [];
-      if (overflowData[i].absences > 0) metrics.push(overflowData[i].absences + "A");
-      if (overflowData[i].lates > 0) metrics.push(overflowData[i].lates + "L");
-      overflowStrings.push(overflowData[i].name + " (" + metrics.join(" ") + ")");
+  // Builds a collapsible <details> block listing every flagged student in a
+  // category with their Student ID, Name and day-count. <details>/<summary> is
+  // natively collapsible in Apple Mail & Outlook; Gmail strips the toggle but
+  // still renders the list expanded — so it degrades gracefully everywhere.
+  // metricKey = 'absences' | 'lates'; only students with a positive count for
+  // that metric are listed. accent = header/border color.
+  function buildCategoryRoster(dataArray, metricKey, label, accent) {
+    var rows = dataArray.filter(function(d) { return (d[metricKey] || 0) > 0; });
+    if (rows.length === 0) return "";
+    var body = "";
+    for (var i = 0; i < rows.length; i++) {
+      var rowBg = (i % 2 === 0) ? "#ffffff" : "#f7fafc";
+      body += '<tr style="background-color:' + rowBg + ';">' +
+              '<td style="padding:6px 10px; font-size:13px; color:#4a5568; border-bottom:1px solid #edf2f7;">' + (rows[i].id || "—") + '</td>' +
+              '<td style="padding:6px 10px; font-size:13px; color:#2d3748; border-bottom:1px solid #edf2f7;">' + rows[i].name + '</td>' +
+              '<td style="padding:6px 10px; font-size:13px; color:#2d3748; text-align:center; font-weight:bold; border-bottom:1px solid #edf2f7;">' + rows[i][metricKey] + '</td>' +
+              '</tr>';
     }
-    return '<div style="margin-top: 15px; padding-top: 12px; border-top: 1px solid #e2e8f0;">' +
-           '<p style="color: #4a5568; font-size: 14px; font-weight: bold; margin-bottom: 5px;">Additional Flagged Students:</p>' +
-           '<p style="color: #718096; font-size: 13px; line-height: 1.6; margin: 0;">' +
-           overflowStrings.join(", ") +
-           '</p></div>';
+    return '<details style="margin-top:12px; border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
+           '<summary style="cursor:pointer; padding:10px 14px; background-color:' + accent + '; color:#fff; font-size:14px; font-weight:bold; list-style:none;">' +
+           label + ' (' + rows.length + ' student' + (rows.length === 1 ? '' : 's') + ') ▾</summary>' +
+           '<table style="width:100%; border-collapse:collapse;">' +
+           '<tr style="background-color:#edf2f7;">' +
+           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:left;">Student ID</th>' +
+           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:left;">Name</th>' +
+           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:center;">Days</th>' +
+           '</tr>' + body + '</table></details>';
+  }
+
+  // Two collapsible categories (Absences, Lates) covering ALL flagged students
+  // — not just the top-20 shown in the chart image.
+  function buildCollapsibleRosters(dataArray) {
+    return buildCategoryRoster(dataArray, 'absences', '🔴 Absences', '#c53030') +
+           buildCategoryRoster(dataArray, 'lates', '🟡 Lates', '#b7791f');
   }
 
   var teacherChartDisplay = teacherChartData.slice(0, MAX_CHART_STUDENTS);
   var stakeholderChartDisplay = stakeholderChartData.slice(0, MAX_CHART_STUDENTS);
-  var result = { teacherHtml: "", teacherBlob: null, stakeholderHtml: "", stakeholderBlob: null };
+  // teacherData / stakeholderData expose the raw flagged-student arrays (full,
+  // not sliced to the top 20) so other consumers — e.g. the Analysis_Dashboard
+  // Section 4 — can render the same chronic-risk data without re-deriving the
+  // lookback logic. Each entry: { name, absences, lates, total }.
+  var result = {
+    teacherHtml: "", teacherBlob: null, stakeholderHtml: "", stakeholderBlob: null,
+    teacherData: teacherChartData, stakeholderData: stakeholderChartData
+  };
 
   if (teacherChartDisplay.length > 0) {
     var chartTitle = teacherChartData.length > MAX_CHART_STUDENTS ? "Consecutive Absences & Lates (Top " + MAX_CHART_STUDENTS + ")" : "Consecutive Absences & Lates";
     result.teacherBlob = createStackedBarChart(teacherChartDisplay, chartTitle);
-    var overflowHtml = getOverflowHtml(teacherChartData);
     result.teacherHtml = '<div style="background-color: #fff; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">' +
                          '<h3 style="color: #2d3748; margin-top: 0;">⚠️ Immediate Attention Required</h3>' +
                          '<p style="color: #718096; font-size: 14px;">The chart below highlights students currently on a consecutive streak (including mixed and skip-adjusted streaks) of absences or late arrivals.</p>' +
                          '<img src="cid:teacher_chart" style="max-width: 100%; height: auto; border-radius: 4px;">' +
-                         overflowHtml + '</div>';
+                         buildCollapsibleRosters(teacherChartData) + '</div>';
   }
 
   if (stakeholderChartDisplay.length > 0) {
     var chartTitle2 = stakeholderChartData.length > MAX_CHART_STUDENTS ? "Chronic Absences & Lates (Top " + MAX_CHART_STUDENTS + ")" : "Chronic Absences & Lates";
     result.stakeholderBlob = createStackedBarChart(stakeholderChartDisplay, chartTitle2);
-    var overflowHtml2 = getOverflowHtml(stakeholderChartData);
     result.stakeholderHtml = '<div style="background-color: #fff; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">' +
                              '<h3 style="color: #2d3748; margin-top: 0;">📉 Chronic Attendance Risks</h3>' +
                              '<p style="color: #718096; font-size: 14px;">Students with frequent absences or late arrivals over the lookback period.</p>' +
                              '<img src="cid:stakeholder_chart_cid" style="max-width: 100%; height: auto; border-radius: 4px;">' +
-                             overflowHtml2 + '</div>';
+                             buildCollapsibleRosters(stakeholderChartData) + '</div>';
   }
 
   return result;
@@ -1137,7 +1178,7 @@ function buildStakeholderDigestHtml(todayStr, digestContent) {
 // =========================================================================
 // CORE SYNC SUBROUTINE
 // =========================================================================
-function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) {
+function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId, managerEmail) {
   try {
     var form = FormApp.openById(activeFormId);
     var responses = form.getResponses();
@@ -1198,7 +1239,7 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId) 
     // by submitter email (persisted in NOTIFIED_<ssId>) so the hourly re-sync
     // over accumulated responses emails each teacher at most once per day; the
     // record is cleared nightly by automated_closeForms.
-    notifySubmitters(ssId, responses, authorizedEmail, sheet.getName(), dayOfMonthDigit);
+    notifySubmitters(ssId, responses, authorizedEmail, sheet.getName(), dayOfMonthDigit, managerEmail);
 
     if (!chosenResponse) {
       Logger.log("      [SYNC][REJECTED] '" + sheet.getName() + "' day " + dayOfMonthDigit +
@@ -1260,7 +1301,10 @@ function normalizeNameForMatch(value) {
 // emails in Script Property NOTIFIED_<ssId> and skip them on later runs, so each
 // teacher is emailed at most once per day. automated_closeForms clears this key
 // nightly, resetting the set for the next day.
-function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMonthDigit) {
+// `managerEmail` (optional, comma-separated) is this class's Program Manager,
+// resolved from the Drive config file by the caller; when present it is CC'd on
+// every confirmation so PMs get live visibility. Falsy -> no CC.
+function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMonthDigit, managerEmail) {
   var props = PropertiesService.getScriptProperties();
   var notifiedKey = 'NOTIFIED_' + ssId;
 
@@ -1288,19 +1332,38 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
   for (var i = 0; i < responses.length; i++) {
     var email = responses[i].getRespondentEmail();
     email = email ? email.toLowerCase().trim() : "";
-    if (email === "") continue;                       // no collected email -> can't notify
+    if (email === "") {                                // no collected email -> can't notify
+      Logger.log("      [SYNC][EMAIL][SKIP] Response " + i + " had no collected email; cannot notify.");
+      continue;
+    }
     if (notified.indexOf(email) !== -1) continue;      // already emailed today
 
     var isAccepted = (!authorizedEmail) || (email === authorizedEmail);
+
+    // Summarize exactly what THIS submitter marked, so the email echoes the
+    // attendance back to them. For an accepted submission this is what was
+    // written to the sheet; for a rejected one it's what they tried to submit.
+    var summary = summarizeResponseGrid(responses[i]);
+
     var subject = isAccepted ? "✅ Attendance Submitted Successfully — " + classLabel
                              : "❌ Attendance Submission Rejected — " + classLabel;
-    var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel);
+    var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel, summary);
+
+    // CC this class's Program Manager (resolved from the Drive config file and
+    // passed in) so they see every submission's recorded attendance alongside
+    // the teacher. Empty/unset -> no CC.
+    var mailOpts = { to: email, subject: subject, htmlBody: htmlBody };
+    var pmCc = managerEmail
+      ? managerEmail.split(",").map(function(e) { return e.trim(); }).filter(function(e) { return e !== ""; }).join(",")
+      : "";
+    if (pmCc !== "") mailOpts.cc = pmCc;
 
     try {
-      MailApp.sendEmail({ to: email, subject: subject, htmlBody: htmlBody });
+      MailApp.sendEmail(mailOpts);
       notified.push(email);
       newlyNotified = true;
-      Logger.log("      [SYNC][EMAIL] " + (isAccepted ? "accepted" : "rejected") + " notice sent to " + email);
+      Logger.log("      [SYNC][EMAIL] " + (isAccepted ? "ACCEPTED" : "REJECTED") + " notice sent to " + email +
+                 " (" + summary.total + " marked: " + summary.present + "P/" + summary.absent + "A/" + summary.late + "L)");
     } catch (err) {
       Logger.log("      [SYNC][EMAIL][ERROR] Could not email " + email + ": " + err.message);
     }
@@ -1311,8 +1374,39 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
   }
 }
 
+// Parses a single form response's attendance grid into a summary the
+// confirmation email can echo back: an ordered list of {name, status} plus
+// per-status counts. Returns zeros/empty if the response has no grid.
+function summarizeResponseGrid(response) {
+  var out = { rows: [], present: 0, absent: 0, late: 0, total: 0 };
+  try {
+    var itemResponses = response.getItemResponses();
+    for (var j = 0; j < itemResponses.length; j++) {
+      var itemResponse = itemResponses[j];
+      if (itemResponse.getItem().getType() !== FormApp.ItemType.GRID) continue;
+      var gridRows = itemResponse.getItem().asGridItem().getRows();
+      var statuses = itemResponse.getResponse();
+      for (var s = 0; s < gridRows.length; s++) {
+        var status = statuses[s];
+        if (!status) continue;                          // left blank in the grid
+        out.rows.push({ name: gridRows[s], status: status });
+        var norm = status.toString().trim().toLowerCase();
+        if (norm === 'present') out.present++;
+        else if (norm === 'absent') out.absent++;
+        else if (norm === 'late') out.late++;
+        out.total++;
+      }
+    }
+  } catch (e) {
+    Logger.log("      [SYNC][EMAIL][WARN] Could not summarize response grid: " + e.message);
+  }
+  return out;
+}
+
 // Builds the accept/reject confirmation email body sent from the hourly sync.
-function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel) {
+// `summary` (optional) is the object from summarizeResponseGrid — when present,
+// the email echoes back exactly what the submitter marked as a table.
+function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel, summary) {
   classLabel = classLabel || "your class";
   var headerColor = isAccepted ? "#4CAF50" : "#f44336";
   var headerText = isAccepted ? "✅ Submission Accepted" : "❌ Submission Rejected";
@@ -1330,6 +1424,34 @@ function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOf
   html += '</div>';
   html += '<div style="padding: 30px;">';
   html += '<p style="font-size: 16px; color: #333;">' + message + '</p>';
+
+  // Echo the submitted attendance back to the teacher.
+  if (summary && summary.total > 0) {
+    html += '<div style="margin-top: 20px;">';
+    html += '<p style="font-size: 14px; color: #333; margin-bottom: 8px;"><strong>' +
+            (isAccepted ? 'Recorded attendance' : 'Attendance you submitted') +
+            '</strong> — ' + summary.total + ' student' + (summary.total === 1 ? '' : 's') +
+            ' (<span style="color:#155724;">' + summary.present + ' Present</span>, ' +
+            '<span style="color:#856404;">' + summary.late + ' Late</span>, ' +
+            '<span style="color:#721c24;">' + summary.absent + ' Absent</span>):</p>';
+    html += '<table style="width:100%; border-collapse:collapse; font-size:13px;">';
+    html += '<tr style="background-color:#edf2f7;">' +
+            '<th style="padding:6px 10px; text-align:left; color:#4a5568;">Student</th>' +
+            '<th style="padding:6px 10px; text-align:center; color:#4a5568;">Status</th></tr>';
+    for (var i = 0; i < summary.rows.length; i++) {
+      var st = summary.rows[i].status.toString().trim().toLowerCase();
+      var badgeBg = st === 'present' ? '#D4EDDA' : (st === 'late' ? '#FFF3CD' : (st === 'absent' ? '#F8D7DA' : '#e2e8f0'));
+      var badgeFg = st === 'present' ? '#155724' : (st === 'late' ? '#856404' : (st === 'absent' ? '#721C24' : '#4a5568'));
+      var rowBg = (i % 2 === 0) ? '#ffffff' : '#f7fafc';
+      html += '<tr style="background-color:' + rowBg + ';">' +
+              '<td style="padding:6px 10px; color:#2d3748; border-bottom:1px solid #edf2f7;">' + summary.rows[i].name + '</td>' +
+              '<td style="padding:6px 10px; text-align:center; border-bottom:1px solid #edf2f7;">' +
+              '<span style="display:inline-block; padding:2px 10px; border-radius:12px; background-color:' + badgeBg + '; color:' + badgeFg + '; font-weight:bold;">' +
+              summary.rows[i].status + '</span></td></tr>';
+    }
+    html += '</table></div>';
+  }
+
   if (!isAccepted) {
     html += '<p style="margin-top: 20px; padding: 15px; background-color: #fff3cd; border-left: 4px solid #f44336; color: #856404;">⚠️ This data was NOT saved. Contact your administrator if you believe this is an error.</p>';
   }
@@ -1388,8 +1510,19 @@ function updateDashboard(ss) {
 
   const currentClassName = ss.getName().split('_').slice(0, 3).join(' ') || "Class 1A";
 
-  // 1. GET ALL SHEETS EXCEPT THE DASHBOARD ITSELF
-  const monthSheets = ss.getSheets().filter(s => s.getName() !== dashboardName);
+  // 1. GET ALL MONTH TABS ONLY — use a WHITELIST of academic month names rather
+  //    than a blacklist. A blacklist ("exclude tabs named Form Responses*") is
+  //    fragile: any unexpected tab (e.g. "Form Responses 7", a renamed response
+  //    tab, or a stray sheet) slips through and gets processed as if it were a
+  //    month, injecting garbage rows into the metrics. Only real month tabs
+  //    (June, July, ...) are ever valid, so match against that set exactly.
+  const validMonthNames = {};
+  getAcademicMonthsList(ACADEMIC_YEAR, START_MONTH, END_MONTH).forEach(function(m) {
+    validMonthNames[m.name] = true;
+  });
+  const monthSheets = ss.getSheets().filter(function(s) {
+    return validMonthNames[s.getName()] === true;
+  });
 
   const studentMap = {};
   const monthClassMap = {};
@@ -1416,18 +1549,21 @@ function updateDashboard(ss) {
         studentMap[studentId] = { name: studentName, className: currentClassName, present: 0, late: 0, absent: 0, total: 0 };
       }
 
+      // Columns 3..N-6 are the daily status cells; the LAST 6 columns are
+      // computed summaries (No of days Present/Absent/Late, Total Attendance,
+      // Total Present, Percentage) holding NUMBERS. We must NOT let those
+      // numbers count as sessions. So a session is only ever tallied when the
+      // cell is a recognized status word — this simultaneously excludes the
+      // summary numbers, empty weekend/holiday cells, and unfilled future days.
       for (let j = 3; j < row.length; j++) {
         const status = row[j];
-        if (status && status.toString().trim() !== '') {
-          const s = status.toString().trim().toLowerCase();
+        if (!status || status.toString().trim() === '') continue;
+        const s = status.toString().trim().toLowerCase();
 
-          if (s === 'present') { monthPresent++; studentMap[studentId].present++; }
-          else if (s === 'late') { monthLate++; studentMap[studentId].late++; }
-          else if (s === 'absent') { monthAbsent++; studentMap[studentId].absent++; }
-
-          monthTotal++;
-          studentMap[studentId].total++;
-        }
+        if (s === 'present') { monthPresent++; studentMap[studentId].present++; monthTotal++; studentMap[studentId].total++; }
+        else if (s === 'late') { monthLate++; studentMap[studentId].late++; monthTotal++; studentMap[studentId].total++; }
+        else if (s === 'absent') { monthAbsent++; studentMap[studentId].absent++; monthTotal++; studentMap[studentId].total++; }
+        // any other value (summary counts, percentage) is intentionally ignored
       }
     }
 
@@ -1454,7 +1590,10 @@ function updateDashboard(ss) {
   dashboardSheet.getRange(currentRow, 1).setValue("1. Month on Month Analysis").setFontWeight("bold").setFontSize(12);
   currentRow++;
 
-  const momHeaders = ['Month', 'Present', 'Absent', 'Late', 'Total Sessions', 'Attendance Rate (%)', 'Absenteeism Rate (%)', 'Late Rate (%)'];
+  // Columns 9-11 (Present %, Late %, Absent %) are kept CONTIGUOUS and in this
+  // exact order so the stacked chart below renders bottom->top = Present, Late,
+  // Absent. These three are % of total sessions and sum to 100%.
+  const momHeaders = ['Month', 'Present', 'Absent', 'Late', 'Total Sessions', 'Attendance Rate (%)', 'Absenteeism Rate (%)', 'Late Rate (%)', 'Present %', 'Late %', 'Absent %'];
   dashboardSheet.getRange(currentRow, 1, 1, momHeaders.length).setValues([momHeaders]).setFontWeight("bold");
   currentRow++;
 
@@ -1465,8 +1604,10 @@ function updateDashboard(ss) {
     const month = sheet.getName();
     if (momMap[month]) {
       const d = momMap[month];
+      const presentRate = d.total > 0 ? (d.present / d.total) * 100 : 0;
       momData.push([
-        month, d.present, d.absent, d.late, d.total, d.attRate.toFixed(2), d.absRate.toFixed(2), d.lateRate.toFixed(2)
+        month, d.present, d.absent, d.late, d.total, d.attRate.toFixed(2), d.absRate.toFixed(2), d.lateRate.toFixed(2),
+        presentRate.toFixed(2), d.lateRate.toFixed(2), d.absRate.toFixed(2)
       ]);
     }
   });
@@ -1519,10 +1660,11 @@ function updateDashboard(ss) {
   dashboardSheet.getRange(currentRow, 1, 1, studentHeaders.length).setValues([studentHeaders]).setFontWeight("bold");
   currentRow++;
 
+  // Sort LOWEST attendance % first — students most at risk surface at the top.
   const sortedStudents = Object.keys(studentMap).sort((a, b) => {
     const rateA = studentMap[a].total > 0 ? (studentMap[a].present + studentMap[a].late) / studentMap[a].total : 0;
     const rateB = studentMap[b].total > 0 ? (studentMap[b].present + studentMap[b].late) / studentMap[b].total : 0;
-    return rateB - rateA;
+    return rateA - rateB;
   });
 
   const studentStartRow = currentRow;
@@ -1549,47 +1691,84 @@ function updateDashboard(ss) {
   }
   const studentEndRow = currentRow - 1;
 
+  // --- Section 4: Chronic Attendance Risks (same signal as Weekly Report) ---
+  // Reuses generateAlertBlocks so this stays identical to the Friday stakeholder
+  // email: students with >= ABSENT_THRESHOLD_DAYS absences in the last
+  // ABSENT_LOOKBACK_DAYS days, OR >= LATE_THRESHOLD_DAYS lates in the last
+  // LATE_LOOKBACK_DAYS days. Evaluated against the CURRENT month tab (the alert
+  // scan walks back into prior months on its own when the lookback needs it).
+  currentRow += 2;
+  dashboardSheet.getRange(currentRow, 1).setValue("4. Chronic Attendance Risks (Last "
+    + Math.max(ABSENT_LOOKBACK_DAYS, LATE_LOOKBACK_DAYS) + " Days)").setFontWeight("bold").setFontSize(12);
+  currentRow++;
+
+  const riskHeaders = ['Student', 'Absences', 'Lates', 'Total Flags'];
+  dashboardSheet.getRange(currentRow, 1, 1, riskHeaders.length).setValues([riskHeaders]).setFontWeight("bold");
+  currentRow++;
+
+  const riskStartRow = currentRow;
+  const riskData = [];
+
+  const currentMonthName = new Date().toLocaleString('en-US', { month: 'long' });
+  const currentMonthSheet = ss.getSheetByName(currentMonthName);
+  if (currentMonthSheet && currentMonthSheet.getLastRow() > 1) {
+    const nameRange = currentMonthSheet.getRange(2, 3, currentMonthSheet.getLastRow() - 1, 1).getValues();
+    const riskStudentNames = [];
+    nameRange.forEach(function(r) {
+      const nm = r[0].toString().trim();
+      if (nm !== '' && nm.toUpperCase().indexOf('CLASS AVERAGE') === -1 && nm.toUpperCase().indexOf('STATUS') === -1) {
+        riskStudentNames.push(nm);
+      }
+    });
+
+    if (riskStudentNames.length > 0) {
+      const alerts = generateAlertBlocks(ss, currentMonthSheet, riskStudentNames, new Date());
+      // Already sorted most-flags-first inside generateAlertBlocks.
+      (alerts.stakeholderData || []).forEach(function(d) {
+        riskData.push([d.name, d.absences, d.lates, d.total]);
+      });
+    }
+  }
+
+  if (riskData.length > 0) {
+    dashboardSheet.getRange(currentRow, 1, riskData.length, riskHeaders.length).setValues(riskData);
+    currentRow += riskData.length;
+  } else {
+    dashboardSheet.getRange(currentRow, 1).setValue("No chronic risks flagged.").setFontColor("#718096");
+    currentRow++;
+  }
+  const riskEndRow = currentRow - 1;
+
   dashboardSheet.hideColumns(9, 3);
 
   // 4. GENERATE CHARTS
   const standardWidth = 600;
   const standardHeight = 400;
   const colLeft = 13;
-  const colRight = 20;
   const rowTop = 2;
   const rowBottom = 23;
 
   if (momEndRow >= momStartRow) {
+    // Stacked % column chart. Series order (bottom->top) follows the column
+    // order: Present % (col 9), Late % (col 10), Absent % (col 11). Colors map
+    // to that same order: green (Present), orange (Late), red (Absent).
+    const momRows = momEndRow - momStartRow + 2;  // include header row
     const momChart = dashboardSheet.newChart()
       .asColumnChart()
-      .addRange(dashboardSheet.getRange(momStartRow - 1, 1, momEndRow - momStartRow + 2, 4))
+      .addRange(dashboardSheet.getRange(momStartRow - 1, 1, momRows, 1))   // Month (x-axis)
+      .addRange(dashboardSheet.getRange(momStartRow - 1, 9, momRows, 3))   // Present %, Late %, Absent %
       .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
       .setNumHeaders(1)
-      .setOption('title', 'Month-over-Month Attendance Analysis')
-      .setOption('colors', ['#2CA02C', '#D62728', '#FF7F0E'])
+      .setOption('title', 'Month-over-Month Attendance Analysis (%)')
+      .setOption('isStacked', true)
+      .setOption('colors', ['#2CA02C', '#FF7F0E', '#D62728'])
+      .setOption('vAxis.title', 'Percentage (%)')
+      .setOption('hAxis.title', 'Month')
       .setOption('width', standardWidth)
       .setOption('height', standardHeight)
       .setPosition(rowTop, colLeft, 0, 0)
       .build();
     dashboardSheet.insertChart(momChart);
-  }
-
-  if (classEndRow >= classStartRow) {
-    const classChart = dashboardSheet.newChart()
-      .asLineChart()
-      .addRange(dashboardSheet.getRange(classStartRow - 1, 1, classEndRow - classStartRow + 2, classHeaders.length))
-      .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
-      .setNumHeaders(1)
-      .setOption('title', 'Average Attendance % by Class')
-      .setOption('hAxis.title', 'Month')
-      .setOption('vAxis.title', 'Attendance %')
-      .setOption('curveType', 'function')
-      .setOption('pointSize', 5)
-      .setOption('width', standardWidth)
-      .setOption('height', standardHeight)
-      .setPosition(rowTop, colRight, 0, 0)
-      .build();
-    dashboardSheet.insertChart(classChart);
   }
 
   if (studentEndRow >= studentStartRow) {
@@ -1614,23 +1793,26 @@ function updateDashboard(ss) {
     dashboardSheet.insertChart(studentChart);
   }
 
-  if (momEndRow >= momStartRow) {
-    const ratesChart = dashboardSheet.newChart()
-      .asLineChart()
-      .addRange(dashboardSheet.getRange(momStartRow - 1, 1, momEndRow - momStartRow + 2, 1))
-      .addRange(dashboardSheet.getRange(momStartRow - 1, 6, momEndRow - momStartRow + 2, 3))
+  if (riskData.length > 0 && riskEndRow >= riskStartRow) {
+    // Stacked bar: Absences (col 2) + Lates (col 3) per flagged student.
+    const riskRows = riskEndRow - riskStartRow + 2;  // include header row
+    const riskChartHeight = Math.max(300, (riskData.length * 30) + 100);
+    const riskChart = dashboardSheet.newChart()
+      .asBarChart()
+      .addRange(dashboardSheet.getRange(riskStartRow - 1, 1, riskRows, 1))   // Student (y-axis)
+      .addRange(dashboardSheet.getRange(riskStartRow - 1, 2, riskRows, 2))   // Absences, Lates
       .setMergeStrategy(Charts.ChartMergeStrategy.MERGE_COLUMNS)
       .setNumHeaders(1)
-      .setOption('title', 'Attendance & Engagement Rates Trend')
-      .setOption('hAxis.title', 'Month')
-      .setOption('vAxis.title', 'Percentage (%)')
-      .setOption('pointSize', 5)
-      .setOption('colors', ['#2CA02C', '#D62728', '#FF7F0E'])
-      .setOption('width', standardWidth)
-      .setOption('height', standardHeight)
-      .setPosition(rowBottom, colRight + 1, 0, 0)
+      .setOption('title', 'Chronic Attendance Risks (Absences & Lates)')
+      .setOption('isStacked', true)
+      .setOption('colors', ['#D62728', '#FBBC04'])
+      .setOption('hAxis.title', 'Total Days Flagged')
+      .setOption('width', 700)
+      .setOption('height', riskChartHeight)
+      .setOption('chartArea', {left: '25%', top: '10%', width: '70%', height: '80%'})
+      .setPosition(rowBottom + 22, colLeft, 0, 0)
       .build();
-    dashboardSheet.insertChart(ratesChart);
+    dashboardSheet.insertChart(riskChart);
   }
 
   dashboardSheet.autoResizeColumns(1, 8);

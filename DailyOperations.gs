@@ -215,6 +215,23 @@ function automated_syncResponses() {
   var files = outputFolder.getFiles();
   var props = PropertiesService.getScriptProperties();
 
+  // Load the master config ONCE for this pass so we can CC each class's Program
+  // Manager (resolved from the Drive config file's programManagers/teacherLeads/
+  // teacherClassMapping chain) on the submission confirmation emails. Built once
+  // — not per workbook — because it reads Excel files from Drive.
+  var syncMasterConfig = null;
+  try {
+    syncMasterConfig = buildMasterConfig(getFolderByLink(CONFIG_FOLDER_LINK));
+  } catch (cfgErr) {
+    Logger.log("  [SYNC][WARNING] Could not load master config for PM CC: " + cfgErr.message);
+  }
+
+  // Track which forms/workbooks are LIVE this pass so the orphan sweep below
+  // never deletes a form teachers are still submitting to (nor its active
+  // response tab). Keyed by id for O(1) lookup in performOrphanCleanup.
+  var activeFormIds = {};
+  var activeSsIds = {};
+
   while (files.hasNext()) {
     var file = files.next();
     if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
@@ -222,6 +239,9 @@ function automated_syncResponses() {
     var ssId = file.getId();
     var activeFormId = props.getProperty('ACTIVE_FORM_' + ssId);
     if (!activeFormId) continue;
+
+    activeFormIds[activeFormId] = true;
+    activeSsIds[ssId] = true;
 
     try {
       var ss = SpreadsheetApp.openById(ssId);
@@ -248,8 +268,20 @@ function automated_syncResponses() {
 
       var dayOfMonthDigit = targetDate.getDate();
 
+      // Resolve this class's Program Manager email from the config: workbook
+      // name "Class_5_A_2026-2027" -> classMap key "5_A" -> .manager.
+      var managerEmail = "";
+      if (syncMasterConfig && syncMasterConfig.classMap) {
+        var wbParts = ss.getName().split("_");   // [Class, 5, A, 2026-2027]
+        if (wbParts.length >= 3) {
+          var cmKey = wbParts[1] + "_" + wbParts[2].toUpperCase();
+          var cmEntry = syncMasterConfig.classMap[cmKey];
+          if (cmEntry && cmEntry.manager) managerEmail = cmEntry.manager;
+        }
+      }
+
       // 1. Process attendance responses into sheet
-      executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId);
+      executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId, managerEmail);
 
       // 2. Ensure Dashboard exists & refresh metrics/charts
       createDashboardIfNotExists(ss);
@@ -259,6 +291,86 @@ function automated_syncResponses() {
       Logger.log("Error syncing " + file.getName() + ": " + err.message);
     }
   }
+
+  // 3. Sweep orphaned forms + response tabs from the Drive folder, preserving
+  //    anything still live today. This keeps the folder clean between the
+  //    nightly automated_closeForms runs (e.g. after a form was manually
+  //    closed or its ACTIVE_FORM_ pointer was cleared).
+  try {
+    var swept = performOrphanCleanup(outputFolder, activeFormIds, activeSsIds);
+    if (swept.formsDeleted > 0 || swept.tabsDeleted > 0) {
+      Logger.log("🧹 Sync sweep: trashed " + swept.formsDeleted +
+                 " orphan form(s), deleted " + swept.tabsDeleted + " orphan tab(s).");
+    }
+  } catch (sweepErr) {
+    Logger.log("Orphan sweep during sync failed: " + sweepErr.message);
+  }
+}
+
+// =========================================================================
+// MANUAL (admin run): Manual Response Sync
+// =========================================================================
+function manual_syncResponses() {
+  Logger.log("=========================================================");
+  Logger.log("MANUAL SYNC: Syncing all active form responses");
+  Logger.log("=========================================================");
+
+  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
+  var files = outputFolder.getFiles();
+  var props = PropertiesService.getScriptProperties();
+  var syncCount = 0;
+
+  while (files.hasNext()) {
+    var file = files.next();
+    if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
+
+    var ssId = file.getId();
+    var activeFormId = props.getProperty('ACTIVE_FORM_' + ssId);
+    if (!activeFormId) continue;
+
+    try {
+      var ss = SpreadsheetApp.openById(ssId);
+
+      // Check if this form has a stored target date (for on-demand forms)
+      var targetDateStr = props.getProperty('FORM_TARGET_DATE_' + activeFormId);
+      var targetDate;
+
+      if (targetDateStr) {
+        // On-demand form: use the stored date
+        targetDate = new Date(targetDateStr);
+        Logger.log("--> Syncing form for " + file.getName() + " (target date: " + targetDateStr + ")");
+      } else {
+        // Regular daily form: use today
+        targetDate = new Date();
+        Logger.log("--> Syncing form for " + file.getName() + " (today)");
+      }
+
+      var monthName = targetDate.toLocaleString('en-US', { month: 'long' });
+      var sheet = ss.getSheetByName(monthName);
+      if (!sheet) {
+        Logger.log("    [WARNING] No sheet for month '" + monthName + "'. Skipping.");
+        continue;
+      }
+
+      var dayOfMonthDigit = targetDate.getDate();
+
+      // Process attendance responses into sheet
+      executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId);
+
+      // Ensure Dashboard exists & refresh metrics/charts
+      createDashboardIfNotExists(ss);
+      updateDashboard(ss);
+
+      syncCount++;
+
+    } catch (err) {
+      Logger.log("    [ERROR] Syncing " + file.getName() + ": " + err.message);
+    }
+  }
+
+  Logger.log("=========================================================");
+  Logger.log("SUCCESS: Synced " + syncCount + " form(s)");
+  Logger.log("=========================================================");
 }
 
 // =========================================================================
@@ -374,6 +486,18 @@ function automated_closeForms() {
         executeSheetSyncProcessing(monthSheet, activeFormId, targetDate.getDate(), ssId);
       }
 
+      // 2b. Refresh the dashboard so it reflects THIS final close-time sync.
+      //     The hourly sync refreshes dashboards during the day, but only while a
+      //     form is active; once we clear ACTIVE_FORM_ below, nothing else would
+      //     pick up the responses just written above. Doing it here removes the
+      //     need for a separate end-of-day refresh pass.
+      try {
+        createDashboardIfNotExists(ss);
+        updateDashboard(ss);
+      } catch (vizErr) {
+        Logger.log("   [WARN] Dashboard refresh failed for " + file.getName() + ": " + vizErr.message);
+      }
+
       // 3. Unlink the form's response destination, then delete every
       //    "Form Responses N" tab (they accumulate one per day otherwise).
       try { form.removeDestination(); } catch (e) { /* not always linkable; ignore */ }
@@ -444,34 +568,41 @@ function manual_closeFormsFlexibly() {
 }
 
 // =========================================================================
-// MANUAL (admin run): Orphan Form + Response-Tab Cleanup
+// SHARED: Orphan Form + Response-Tab Cleanup (folder scan)
 // -------------------------------------------------------------------------
-// automated_closeForms only cleans up a workbook whose ACTIVE_FORM_<ssId>
-// property is still set. Forms whose pointer was already cleared (or never
-// set) become ORPHANS — the Form file lingers in the output folder and its
-// "Form Responses N" tab lingers in the workbook. This function finds and
-// removes them by SCANNING the folder, independent of any Script Property.
+// Removes ORPHANS by scanning the output folder, independent of any Script
+// Property: attendance Form FILES that are no longer live, and stray
+// "Form Responses N" TABS left behind in workbooks.
 //
-// It is data-safe: for each Form still linked to a workbook it runs a final
-// sync (writing attendance into the month tabs) BEFORE deleting the form and
-// its response tabs. Attendance lives in the month tabs — never in the
-// "Form Responses" tab — so nothing is lost.
+// LIVE PRESERVATION: pass activeFormIds / activeSsIds (maps keyed by id) to
+// protect forms/tabs that are still in use TODAY — the hourly sync passes the
+// current ACTIVE_FORM_ set so it never deletes a form teachers are still
+// submitting to, nor the response tab that form is actively appending to.
+// Pass empty maps ({}, {}) to nuke everything (the manual full cleanup).
+//
+// Data-safe: for each form still linked to a workbook it runs a final sync
+// (writing attendance into the month tabs) BEFORE trashing the form. Attendance
+// lives in the month tabs — never in the "Form Responses" tab — so nothing is
+// lost. Returns { formsDeleted, tabsDeleted }.
 // =========================================================================
-function manual_cleanupOrphanForms() {
-  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
+function performOrphanCleanup(outputFolder, activeFormIds, activeSsIds) {
+  activeFormIds = activeFormIds || {};
+  activeSsIds = activeSsIds || {};
   var formsDeleted = 0, tabsDeleted = 0;
 
-  // 1. Delete every Attendance Form file in the output folder. First do a final
-  //    sync into its destination workbook so no submitted response is lost.
+  // 1. Trash orphan Attendance Form files (skip any that are still live).
   var formFiles = outputFolder.getFilesByType(MimeType.GOOGLE_FORMS);
   while (formFiles.hasNext()) {
     var formFile = formFiles.next();
+    var fid = formFile.getId();
     var title = formFile.getName();
     // Only touch attendance forms this system generates.
     if (title.indexOf("Attendance") !== 0) continue;
+    // Never delete a form that is still the active form for some workbook.
+    if (activeFormIds[fid]) continue;
 
     try {
-      var form = FormApp.openById(formFile.getId());
+      var form = FormApp.openById(fid);
       form.setAcceptingResponses(false);
 
       // Final sync if the form is linked to a workbook we can resolve.
@@ -483,7 +614,7 @@ function manual_cleanupOrphanForms() {
           var today = new Date();
           var monthSheet = ss.getSheetByName(today.toLocaleString('en-US', { month: 'long' }));
           if (monthSheet) {
-            executeSheetSyncProcessing(monthSheet, formFile.getId(), today.getDate(), destId);
+            executeSheetSyncProcessing(monthSheet, fid, today.getDate(), destId);
           }
         } catch (e2) {
           Logger.log("   [WARN] Final sync failed for " + title + ": " + e2.message);
@@ -496,13 +627,15 @@ function manual_cleanupOrphanForms() {
 
     formFile.setTrashed(true);
     formsDeleted++;
-    Logger.log("🧹 Trashed form file: " + title);
+    Logger.log("🧹 Trashed orphan form file: " + title);
   }
 
-  // 2. In every workbook, delete leftover "Form Responses N" tabs.
+  // 2. Delete leftover "Form Responses N" tabs. Skip workbooks that still have
+  //    a live form — that form legitimately owns its response tab until close.
   var sheetFiles = outputFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
   while (sheetFiles.hasNext()) {
     var sf = sheetFiles.next();
+    if (activeSsIds[sf.getId()]) continue;
     try {
       var wb = SpreadsheetApp.openById(sf.getId());
       var tabs = wb.getSheets();
@@ -511,7 +644,7 @@ function manual_cleanupOrphanForms() {
         if (tabName.indexOf('Form Responses') === 0 && wb.getSheets().length > 1) {
           wb.deleteSheet(tabs[s]);
           tabsDeleted++;
-          Logger.log("🧹 Deleted response tab '" + tabName + "' in " + sf.getName());
+          Logger.log("🧹 Deleted orphan response tab '" + tabName + "' in " + sf.getName());
         }
       }
     } catch (eWb) {
@@ -519,7 +652,22 @@ function manual_cleanupOrphanForms() {
     }
   }
 
-  // 3. Clear any lingering ACTIVE_FORM_ / NOTIFIED_ pointers (now dangling).
+  return { formsDeleted: formsDeleted, tabsDeleted: tabsDeleted };
+}
+
+// =========================================================================
+// MANUAL (admin run): Full Orphan Form + Response-Tab Cleanup
+// -------------------------------------------------------------------------
+// Nukes ALL attendance forms + response tabs in the output folder (passes
+// empty active maps), then clears any dangling ACTIVE_FORM_ / NOTIFIED_
+// pointers. Use when the daily automation left orphans behind.
+// =========================================================================
+function manual_cleanupOrphanForms() {
+  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
+
+  var res = performOrphanCleanup(outputFolder, {}, {});
+
+  // Clear any lingering ACTIVE_FORM_ / NOTIFIED_ pointers (now dangling).
   var props = PropertiesService.getScriptProperties();
   var all = props.getProperties();
   for (var key in all) {
@@ -528,8 +676,8 @@ function manual_cleanupOrphanForms() {
     }
   }
 
-  Logger.log("✅ Orphan cleanup complete. Forms trashed: " + formsDeleted +
-             ", response tabs deleted: " + tabsDeleted + ".");
+  Logger.log("✅ Orphan cleanup complete. Forms trashed: " + res.formsDeleted +
+             ", response tabs deleted: " + res.tabsDeleted + ".");
 }
 
 // =========================================================================
@@ -568,9 +716,15 @@ function automated_sendWeeklyReport() {
     var alertsResult = generateAlertBlocks(ss, sheet, studentNames, today);
     if (alertsResult.stakeholderHtml && alertsResult.stakeholderHtml !== "") {
       digestContent += '<h3 style="color: #2d3748; margin-top: 25px;">' + file.getName() + '</h3>';
-      digestContent += alertsResult.stakeholderHtml;
+      // Each workbook's chart needs a UNIQUE inline-image CID, otherwise all
+      // blocks reference the same "stakeholder_chart_cid" and the images
+      // collide / render broken. generateAlertBlocks emits the placeholder
+      // src="cid:stakeholder_chart_cid"; swap it here for a per-file CID that
+      // matches what we register in allCharts below.
+      var uniqueCid = 'stakeholder_chart_cid_' + file.getId();
+      digestContent += alertsResult.stakeholderHtml.replace('cid:stakeholder_chart_cid', 'cid:' + uniqueCid);
       if (alertsResult.stakeholderBlob) {
-        allCharts.push({ cid: 'stakeholder_chart_cid_' + file.getId(), blob: alertsResult.stakeholderBlob });
+        allCharts.push({ cid: uniqueCid, blob: alertsResult.stakeholderBlob });
       }
     }
   }
@@ -607,43 +761,6 @@ function automated_sendWeeklyReport() {
 }
 
 // =========================================================================
-// AUTOMATED (11 PM daily trigger): End-of-Day Visualization Refresh
-// -------------------------------------------------------------------------
-// Rebuilds the Analysis_Dashboard for every class workbook once at end of day,
-// so charts/metrics reflect the full day's synced attendance (including the
-// final sync done by automated_closeForms). The hourly sync also refreshes the
-// dashboard, but this guarantees a clean, complete end-of-day snapshot.
-// =========================================================================
-function automated_refreshVisualizations() {
-  var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
-  var files = outputFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
-  var refreshed = 0;
-
-  while (files.hasNext()) {
-    var file = files.next();
-    try {
-      var ss = SpreadsheetApp.openById(file.getId());
-      createDashboardIfNotExists(ss);  // create if missing (also populates it)
-      updateDashboard(ss);             // recompute metrics/charts from month tabs
-      refreshed++;
-      Logger.log("📊 Refreshed dashboard: " + file.getName());
-    } catch (err) {
-      Logger.log("Error refreshing visualization for " + file.getName() + ": " + err.message);
-    }
-  }
-
-  Logger.log("✅ End-of-day visualization refresh complete. " + refreshed + " workbook(s) updated.");
-}
-
-// =========================================================================
-// MANUAL (admin run): Refresh visualizations on demand (same as the automated
-// end-of-day refresh, but runnable any time).
-// =========================================================================
-function manual_refreshVisualizations() {
-  automated_refreshVisualizations();
-}
-
-// =========================================================================
 // MANUAL (one-time admin run): Trigger Installer — registers each automated_* function
 // =========================================================================
 function manual_installTriggers() {
@@ -658,18 +775,11 @@ function manual_installTriggers() {
     .everyHours(1)
     .create();
 
+  // 11 PM close does a final sync AND refreshes each dashboard, so the
+  // end-of-day snapshot is complete without a separate refresh pass.
   ScriptApp.newTrigger('automated_closeForms')
     .timeBased()
     .atHour(23)
-    .everyDays(1)
-    .create();
-
-  // Runs after automated_closeForms (11 PM) so the end-of-day dashboard reflects
-  // the full day's synced attendance, including that final close-time sync.
-  ScriptApp.newTrigger('automated_refreshVisualizations')
-    .timeBased()
-    .atHour(23)
-    .nearMinute(45)
     .everyDays(1)
     .create();
 
@@ -679,7 +789,7 @@ function manual_installTriggers() {
     .atHour(17)
     .create();
 
-  Logger.log("✅ All triggers installed successfully. (5 total: 6AM forms, hourly sync, 11PM close, 11:45PM viz refresh, Fri 5PM report)");
+  Logger.log("✅ All triggers installed successfully. (4 total: 6AM forms, hourly sync, 11PM close+refresh, Fri 5PM report)");
 }
 
 // =========================================================================
