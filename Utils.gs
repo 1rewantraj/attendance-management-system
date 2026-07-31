@@ -1321,19 +1321,29 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
   for (var i = 0; i < responses.length; i++) {
     var email = responses[i].getRespondentEmail();
     email = email ? email.toLowerCase().trim() : "";
-    if (email === "") continue;                       // no collected email -> can't notify
+    if (email === "") {                                // no collected email -> can't notify
+      Logger.log("      [SYNC][EMAIL][SKIP] Response " + i + " had no collected email; cannot notify.");
+      continue;
+    }
     if (notified.indexOf(email) !== -1) continue;      // already emailed today
 
     var isAccepted = (!authorizedEmail) || (email === authorizedEmail);
+
+    // Summarize exactly what THIS submitter marked, so the email echoes the
+    // attendance back to them. For an accepted submission this is what was
+    // written to the sheet; for a rejected one it's what they tried to submit.
+    var summary = summarizeResponseGrid(responses[i]);
+
     var subject = isAccepted ? "✅ Attendance Submitted Successfully — " + classLabel
                              : "❌ Attendance Submission Rejected — " + classLabel;
-    var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel);
+    var htmlBody = buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel, summary);
 
     try {
       MailApp.sendEmail({ to: email, subject: subject, htmlBody: htmlBody });
       notified.push(email);
       newlyNotified = true;
-      Logger.log("      [SYNC][EMAIL] " + (isAccepted ? "accepted" : "rejected") + " notice sent to " + email);
+      Logger.log("      [SYNC][EMAIL] " + (isAccepted ? "ACCEPTED" : "REJECTED") + " notice sent to " + email +
+                 " (" + summary.total + " marked: " + summary.present + "P/" + summary.absent + "A/" + summary.late + "L)");
     } catch (err) {
       Logger.log("      [SYNC][EMAIL][ERROR] Could not email " + email + ": " + err.message);
     }
@@ -1344,8 +1354,39 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
   }
 }
 
+// Parses a single form response's attendance grid into a summary the
+// confirmation email can echo back: an ordered list of {name, status} plus
+// per-status counts. Returns zeros/empty if the response has no grid.
+function summarizeResponseGrid(response) {
+  var out = { rows: [], present: 0, absent: 0, late: 0, total: 0 };
+  try {
+    var itemResponses = response.getItemResponses();
+    for (var j = 0; j < itemResponses.length; j++) {
+      var itemResponse = itemResponses[j];
+      if (itemResponse.getItem().getType() !== FormApp.ItemType.GRID) continue;
+      var gridRows = itemResponse.getItem().asGridItem().getRows();
+      var statuses = itemResponse.getResponse();
+      for (var s = 0; s < gridRows.length; s++) {
+        var status = statuses[s];
+        if (!status) continue;                          // left blank in the grid
+        out.rows.push({ name: gridRows[s], status: status });
+        var norm = status.toString().trim().toLowerCase();
+        if (norm === 'present') out.present++;
+        else if (norm === 'absent') out.absent++;
+        else if (norm === 'late') out.late++;
+        out.total++;
+      }
+    }
+  } catch (e) {
+    Logger.log("      [SYNC][EMAIL][WARN] Could not summarize response grid: " + e.message);
+  }
+  return out;
+}
+
 // Builds the accept/reject confirmation email body sent from the hourly sync.
-function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel) {
+// `summary` (optional) is the object from summarizeResponseGrid — when present,
+// the email echoes back exactly what the submitter marked as a table.
+function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOfMonthDigit, classLabel, summary) {
   classLabel = classLabel || "your class";
   var headerColor = isAccepted ? "#4CAF50" : "#f44336";
   var headerText = isAccepted ? "✅ Submission Accepted" : "❌ Submission Rejected";
@@ -1363,6 +1404,34 @@ function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOf
   html += '</div>';
   html += '<div style="padding: 30px;">';
   html += '<p style="font-size: 16px; color: #333;">' + message + '</p>';
+
+  // Echo the submitted attendance back to the teacher.
+  if (summary && summary.total > 0) {
+    html += '<div style="margin-top: 20px;">';
+    html += '<p style="font-size: 14px; color: #333; margin-bottom: 8px;"><strong>' +
+            (isAccepted ? 'Recorded attendance' : 'Attendance you submitted') +
+            '</strong> — ' + summary.total + ' student' + (summary.total === 1 ? '' : 's') +
+            ' (<span style="color:#155724;">' + summary.present + ' Present</span>, ' +
+            '<span style="color:#856404;">' + summary.late + ' Late</span>, ' +
+            '<span style="color:#721c24;">' + summary.absent + ' Absent</span>):</p>';
+    html += '<table style="width:100%; border-collapse:collapse; font-size:13px;">';
+    html += '<tr style="background-color:#edf2f7;">' +
+            '<th style="padding:6px 10px; text-align:left; color:#4a5568;">Student</th>' +
+            '<th style="padding:6px 10px; text-align:center; color:#4a5568;">Status</th></tr>';
+    for (var i = 0; i < summary.rows.length; i++) {
+      var st = summary.rows[i].status.toString().trim().toLowerCase();
+      var badgeBg = st === 'present' ? '#D4EDDA' : (st === 'late' ? '#FFF3CD' : (st === 'absent' ? '#F8D7DA' : '#e2e8f0'));
+      var badgeFg = st === 'present' ? '#155724' : (st === 'late' ? '#856404' : (st === 'absent' ? '#721C24' : '#4a5568'));
+      var rowBg = (i % 2 === 0) ? '#ffffff' : '#f7fafc';
+      html += '<tr style="background-color:' + rowBg + ';">' +
+              '<td style="padding:6px 10px; color:#2d3748; border-bottom:1px solid #edf2f7;">' + summary.rows[i].name + '</td>' +
+              '<td style="padding:6px 10px; text-align:center; border-bottom:1px solid #edf2f7;">' +
+              '<span style="display:inline-block; padding:2px 10px; border-radius:12px; background-color:' + badgeBg + '; color:' + badgeFg + '; font-weight:bold;">' +
+              summary.rows[i].status + '</span></td></tr>';
+    }
+    html += '</table></div>';
+  }
+
   if (!isAccepted) {
     html += '<p style="margin-top: 20px; padding: 15px; background-color: #fff3cd; border-left: 4px solid #f44336; color: #856404;">⚠️ This data was NOT saved. Contact your administrator if you believe this is an error.</p>';
   }
