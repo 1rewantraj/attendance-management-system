@@ -896,7 +896,15 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
   );
 
   var validColumnsToCheck = [];
-  var checkDayOffset = today.getDate() - 1;
+  // Start the backward lookback at TODAY (not today-1). Today's marks must count
+  // toward the streaks/lookback windows, otherwise a student absent/late for the
+  // last N school days *including today* is undercounted by one and slips below
+  // the threshold — e.g. 3 consecutive lates read as 2 (never alerted), and an
+  // absence alert appears to require 4 days when the threshold is 3. When this
+  // runs before today's column is marked (e.g. the 6 AM daily send) today's cell
+  // has no Present/Absent/Late value, so isInstructionalDay() rejects it and it
+  // is skipped harmlessly — the count only includes today once attendance exists.
+  var checkDayOffset = today.getDate();
   var scanSheet = sheet, scanMonthObj = new Date(today.getTime());
 
   while (validColumnsToCheck.length < MAX_LOOKBACK) {
