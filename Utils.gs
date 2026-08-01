@@ -140,8 +140,12 @@ function getExcelDataFromFolder(folder, fileNameMatch) {
   var matches = comprehensiveFileSearch(fileNameMatch, folder);
   if (matches.length > 0) {
     var bestFile = matches[0];
-    Logger.log("    [MATCH FOUND] Keyword '" + fileNameMatch + "' matched to: " + bestFile.getName());
-    return parseAndNormalizeData(bestFile, true);
+    Logger.log("    [MATCH FOUND] Keyword '" + fileNameMatch + "' matched to: " + bestFile.getName() +
+               " (mime: " + bestFile.getMimeType() + "; " + matches.length + " candidate(s))");
+    var parsed = parseAndNormalizeData(bestFile, true);
+    Logger.log("    [PARSE DONE] '" + bestFile.getName() + "' → " +
+               (parsed ? parsed.length : 0) + " raw row(s).");
+    return parsed;
   }
   return null;
 }
@@ -154,6 +158,7 @@ function parseAndNormalizeData(file, returnRaw) {
     var fileString = file.getBlob().getDataAsString();
     rawRows = Utilities.parseCsv(fileString);
   } else if (mimeType === MimeType.MICROSOFT_EXCEL || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
+    Logger.log("    [XLSX CONVERT] Copying '" + file.getName() + "' to a temp Google Sheet...");
     var tempFile = Drive.Files.copy(
       {title: "Temp_" + file.getName(), mimeType: MimeType.GOOGLE_SHEETS},
       file.getId()
@@ -161,6 +166,7 @@ function parseAndNormalizeData(file, returnRaw) {
     var tempSs = SpreadsheetApp.openById(tempFile.id);
     rawRows = tempSs.getSheets()[0].getDataRange().getValues();
     DriveApp.getFileById(tempFile.id).setTrashed(true);
+    Logger.log("    [XLSX CONVERT DONE] Read " + rawRows.length + " row(s).");
   } else if (mimeType === MimeType.GOOGLE_SHEETS) {
     var tempSs = SpreadsheetApp.openById(file.getId());
     rawRows = tempSs.getSheets()[0].getDataRange().getValues();
@@ -663,6 +669,7 @@ function getPublicHolidays(configFolder) {
   var holidays = [];
   var data = getExcelDataFromFolder(configFolder, HOLIDAY_FILE_NAME);
   if (!data || data.length < 2) return holidays;
+  Logger.log("    [HOLIDAYS] Parsing " + (data.length - 1) + " holiday row(s)...");
 
   var header = data[0].map(function(h) { return h.toString().toLowerCase().trim(); });
   
@@ -726,16 +733,24 @@ function getPublicHolidays(configFolder) {
         continue;
       }
       var curr = new Date(startDate.getTime());
+      var iterGuard = 0;
       while (curr <= endDate) {
         var formatted = Utilities.formatDate(curr, timeZone, "yyyy-MM-dd");
         if (holidays.indexOf(formatted) === -1) {
           holidays.push(formatted);
         }
         curr.setDate(curr.getDate() + 1);
+        // Absolute backstop: even if spanDays was miscomputed, never loop past
+        // the capped range. Prevents any possibility of an infinite loop.
+        if (++iterGuard > MAX_RANGE_DAYS) {
+          Logger.log("   [WARN] Iteration guard tripped on row " + (i + 1) + "; stopping range early.");
+          break;
+        }
       }
     }
   }
 
+  Logger.log("    [HOLIDAYS] Done. " + holidays.length + " holiday date(s) collected.");
   return holidays;
 }
 
