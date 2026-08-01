@@ -708,6 +708,23 @@ function getPublicHolidays(configFolder) {
 
     // 3. Loop through every day in the date range and collect YYYY-MM-DD
     if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+      // Guard against a malformed row (e.g. a mistyped year like 2206, or a
+      // range whose "to" date parsed earlier than its "from"). Without this,
+      // the day-by-day loop below could iterate for hundreds of thousands of
+      // days — calling Utilities.formatDate each time — and hang the run.
+      if (endDate.getTime() < startDate.getTime()) {
+        var tmp = startDate; startDate = endDate; endDate = tmp;
+      }
+      var spanDays = Math.floor((endDate.getTime() - startDate.getTime()) / 86400000) + 1;
+      var MAX_RANGE_DAYS = 366; // no legitimate single holiday range exceeds a year
+      if (spanDays > MAX_RANGE_DAYS) {
+        Logger.log("   [WARN] Skipping suspicious holiday range in row " + (i + 1) +
+                   " spanning " + spanDays + " days (" +
+                   Utilities.formatDate(startDate, timeZone, "yyyy-MM-dd") + " → " +
+                   Utilities.formatDate(endDate, timeZone, "yyyy-MM-dd") +
+                   "). Check the date value in the '" + HOLIDAY_FILE_NAME + "' file.");
+        continue;
+      }
       var curr = new Date(startDate.getTime());
       while (curr <= endDate) {
         var formatted = Utilities.formatDate(curr, timeZone, "yyyy-MM-dd");
