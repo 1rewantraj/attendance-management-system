@@ -1047,6 +1047,9 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     checkDayOffset--;
   }
 
+  Logger.log("    [ALERTS] Scanning " + studentNames.length + " student(s) across " +
+             validColumnsToCheck.length + " lookback column(s).");
+
   var teacherChartData = [];
   var stakeholderChartData = [];
 
@@ -1072,10 +1075,35 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     for (var ii = 0; ii < idVals.length; ii++) studentIds.push(idVals[ii][0].toString().trim());
   } catch (e) { studentIds = []; }
 
+  // PERF: read each referenced sheet's student block ONCE, instead of one
+  // getValue() per student-per-column. The old nested loop did
+  // studentNames.length × validColumnsToCheck.length individual round-trips
+  // (which can span several month tabs) — hundreds to thousands of calls that
+  // stall the run. Here we cache one getValues() per distinct sheet and index
+  // into it in memory. Grid is 0-based from row 2, so student sIdx → grid[sIdx]
+  // and 1-based colIndex → grid[sIdx][colIndex - 1].
+  var sheetGridCache = {};
+  function getSheetGrid(sh) {
+    var key = sh.getName();
+    if (!sheetGridCache[key]) {
+      // Clamp the row count to the sheet's own data — a prior-month tab may hold
+      // fewer students than the current roster, and reading past the last row
+      // would throw. Rows absent from a shorter sheet index to undefined below
+      // and are treated as "" (no status), which is correct.
+      var numRows = Math.min(studentNames.length, Math.max(0, sh.getLastRow() - 1));
+      sheetGridCache[key] = numRows > 0
+        ? sh.getRange(2, 1, numRows, sh.getLastColumn()).getValues()
+        : [];
+    }
+    return sheetGridCache[key];
+  }
+
   for (var sIdx = 0; sIdx < studentNames.length; sIdx++) {
-    var rowNum = sIdx + 2; var statuses = [];
+    var statuses = [];
     for (var c = 0; c < validColumnsToCheck.length; c++) {
-      statuses.push(validColumnsToCheck[c].sheet.getRange(rowNum, validColumnsToCheck[c].colIndex).getValue().toString().trim());
+      var grid = getSheetGrid(validColumnsToCheck[c].sheet);
+      var cellVal = grid[sIdx] ? grid[sIdx][validColumnsToCheck[c].colIndex - 1] : "";
+      statuses.push(cellVal == null ? "" : cellVal.toString().trim());
     }
 
     var absentStreak = getForgivingStreak(statuses, ["Absent"], ALLOWED_PRESENT_SKIPS);
