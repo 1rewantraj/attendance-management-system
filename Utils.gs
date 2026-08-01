@@ -1017,15 +1017,58 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
   var checkDayOffset = today.getDate();
   var scanSheet = sheet, scanMonthObj = new Date(today.getTime());
 
+  // --- Termination + perf guards for the backward month-walk ------------------
+  // getSheetByName resolves month tabs by NAME only ("June"), and month names
+  // repeat every 12 months. If a workbook has tabs for all 12 month names (no
+  // gap), the "if (!scanSheet) break" exit is never reached — the walk cycles
+  // the same tabs forever until the 6-min timeout (the observed hang). Guard
+  // with a visited-set (break the moment we'd revisit a month) plus a hard cap
+  // on months walked. Also cache each sheet's header row and its row-2
+  // backgrounds so we do ONE getValues()/getBackgrounds() per sheet instead of
+  // re-reading the header and calling the slow getBackground() every iteration.
+  var visitedSheets = {};
+  var monthsWalked = 0;
+  var MAX_MONTHS_BACK = 14; // an academic year is <= 12 months; >14 means cycling
+  var headerCache = {};
+  var bgRowCache = {};
+  var sampleCache = {};
+
+  function scanHeaders(sh) {
+    var k = sh.getName();
+    if (!headerCache[k]) headerCache[k] = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    return headerCache[k];
+  }
+  function scanRow2Backgrounds(sh) {
+    var k = sh.getName();
+    if (!bgRowCache[k]) bgRowCache[k] = sh.getRange(2, 1, 1, sh.getLastColumn()).getBackgrounds()[0];
+    return bgRowCache[k];
+  }
+  function scanSampleValues(sh) {
+    // First few students' rows across all columns, read once, to detect whether
+    // a given day-column is an instructional (marked) day.
+    var k = sh.getName();
+    if (!sampleCache[k]) {
+      var rows = Math.min(5, Math.max(0, sh.getLastRow() - 1));
+      sampleCache[k] = rows > 0 ? sh.getRange(2, 1, rows, sh.getLastColumn()).getValues() : [];
+    }
+    return sampleCache[k];
+  }
+
+  visitedSheets[scanSheet.getName()] = true;
+  Logger.log("    [ALERTS] Discovering lookback columns (target " + MAX_LOOKBACK + ")...");
+
   while (validColumnsToCheck.length < MAX_LOOKBACK) {
     if (checkDayOffset < 1) {
       scanMonthObj = new Date(scanMonthObj.getFullYear(), scanMonthObj.getMonth() - 1, 1);
       var prevMonthName = scanMonthObj.toLocaleString('en-US', { month: 'long' });
       scanSheet = ss.getSheetByName(prevMonthName);
       if (!scanSheet) break;
+      // Cycle guard: we've walked a full year back onto an already-scanned tab.
+      if (visitedSheets[scanSheet.getName()] || ++monthsWalked > MAX_MONTHS_BACK) break;
+      visitedSheets[scanSheet.getName()] = true;
       checkDayOffset = new Date(scanMonthObj.getFullYear(), scanMonthObj.getMonth() + 1, 0).getDate();
     }
-    var currentHeaders = scanSheet.getRange(1, 1, 1, scanSheet.getLastColumn()).getValues()[0];
+    var currentHeaders = scanHeaders(scanSheet);
     var colIdx = -1;
     for (var h = 0; h < currentHeaders.length; h++) {
       if (parseInt(currentHeaders[h], 10) === checkDayOffset) {
@@ -1034,11 +1077,12 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
       }
     }
     if (colIdx !== -1) {
-      var bgColor = scanSheet.getRange(2, colIdx).getBackground().toLowerCase();
+      var bgRow = scanRow2Backgrounds(scanSheet);
+      var bgColor = (bgRow[colIdx - 1] || "").toString().toLowerCase();
       if (bgColor !== '#ff0000') {
-        var sampleData = scanSheet.getRange(2, colIdx, Math.min(5, studentNames.length), 1).getValues();
-        var isInstructionalDay = sampleData.some(function(cell) {
-          var s = cell[0].toString().trim();
+        var sampleGrid = scanSampleValues(scanSheet);
+        var isInstructionalDay = sampleGrid.some(function(rowArr) {
+          var s = (rowArr[colIdx - 1] == null ? "" : rowArr[colIdx - 1]).toString().trim();
           return s === "Present" || s === "Absent" || s === "Late";
         });
         if (isInstructionalDay) { validColumnsToCheck.push({ sheet: scanSheet, colIndex: colIdx }); }
