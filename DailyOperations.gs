@@ -14,18 +14,23 @@ function automated_sendDailyForms() {
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
   
   var rosterFiles = rosterFolder.getFiles();
+  Logger.log("[STEP] Loading teacher mapping...");
   var teacherMapping = loadTeacherMapping();
+  Logger.log("[STEP] Building master config...");
   var masterConfig = buildMasterConfig(configFolder);
+  Logger.log("[STEP] Loading holidays (send flow)...");
   var holidays = getPublicHolidays(configFolder);
+  Logger.log("[STEP] Entering roster loop.");
 
   while (rosterFiles.hasNext()) {
     var rosterFile = rosterFiles.next();
     var fileName = rosterFile.getName();
+    Logger.log("[STEP] Roster file: " + fileName);
     var parsed = parseClassAndSectionFromText(fileName);
     var classNum = parsed.classNum, section = parsed.section;
     var mapKey = classNum.toLowerCase() + "_" + section.toLowerCase();
 
-    if (!teacherMapping[mapKey]) continue;
+    if (!teacherMapping[mapKey]) { Logger.log("[SKIP] No teacher mapping for " + mapKey); continue; }
 
     var teacherName = teacherMapping[mapKey].name;
     var teacherEmail = teacherMapping[mapKey].email;
@@ -44,9 +49,11 @@ function automated_sendDailyForms() {
     var ss, ssFile;
 
     if (existingSsArray.hasNext()) {
+      Logger.log("[STEP] Opening existing workbook: " + ssName);
       ssFile = existingSsArray.next();
       ss = SpreadsheetApp.openById(ssFile.getId());
     } else {
+      Logger.log("[STEP] Creating new workbook: " + ssName);
       ss = SpreadsheetApp.create(ssName);
       ssFile = DriveApp.getFileById(ss.getId());
       ssFile.moveTo(outputFolder);
@@ -55,11 +62,12 @@ function automated_sendDailyForms() {
       var monthsToCreate = getAcademicMonthsList(ACADEMIC_YEAR, START_MONTH, END_MONTH);
       buildAttendanceWorkbook(ss, rosterData, monthsToCreate, holidays);
       applyPermissionsToSpreadsheet(ssFile, classNum, section, masterConfig);
+      Logger.log("[STEP] Built new workbook: " + ssName);
     }
 
     var monthName = today.toLocaleString('en-US', { month: 'long' });
     var sheet = ss.getSheetByName(monthName);
-    if (!sheet) continue;
+    if (!sheet) { Logger.log("[SKIP] No sheet for month " + monthName + " in " + ssName); continue; }
 
     var studentNamesRange = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
     var studentNames = [];
@@ -69,7 +77,8 @@ function automated_sendDailyForms() {
       }
     }
 
-    if (studentNames.length === 0) continue;
+    if (studentNames.length === 0) { Logger.log("[SKIP] No students in " + ssName); continue; }
+    Logger.log("[STEP] " + studentNames.length + " student(s). Creating form...");
 
     var formTitle = "Attendance: Class " + classNum + "-" + section.toUpperCase() + " (" + todayStr + ")";
     var form = FormApp.create(formTitle);
@@ -88,6 +97,7 @@ function automated_sendDailyForms() {
     gridItem.setColumns(['Present', 'Absent', 'Late']);
     gridItem.setRequired(true);
 
+    Logger.log("[STEP] Form built; moving + linking to workbook...");
     var formFile = DriveApp.getFileById(form.getId());
     formFile.moveTo(outputFolder);
     form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
@@ -102,7 +112,9 @@ function automated_sendDailyForms() {
     var todayKey = Utilities.formatDate(today, Session.getScriptTimeZone(), "yyyy-MM-dd");
     props.setProperty('FORM_TARGET_DATE_' + form.getId(), todayKey);
 
+    Logger.log("[STEP] Generating alert blocks...");
     var alertsResult = generateAlertBlocks(ss, sheet, studentNames, today);
+    Logger.log("[STEP] Alert blocks done; building email...");
     var teacherAlertsHtml = alertsResult.teacherHtml || "";
 
     var htmlBody = buildSimpleHtmlEmail(todayStr, classNum, section, teacherName, liveUrl, teacherAlertsHtml);
@@ -120,6 +132,7 @@ function automated_sendDailyForms() {
       mailOptions.inlineImages = { teacher_chart: alertsResult.teacherBlob };
     }
 
+    Logger.log("[STEP] Sending email...");
     MailApp.sendEmail(mailOptions);
     Logger.log("✅ Sent: " + teacherEmail + (leadCc ? " | CC lead: " + leadCc : "") + " | Class " + classNum + "-" + section);
   }
