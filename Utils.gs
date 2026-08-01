@@ -39,8 +39,12 @@ function cleanupOrphanFormsAndResponseTabs(outputFolder, activeFormIds, activeSs
     var title = formFile.getName();
     var isDailyAttendanceForm = title.indexOf("Attendance: Class ") === 0;
     var isOnDemandAttendanceForm = title.indexOf("On-Demand Attendance Form: Class ") === 0;
-    var isLegacyMakeupForm = title.indexOf("Attendance (Makeup): Class ") === 0;
-    if (!isDailyAttendanceForm && !isOnDemandAttendanceForm && !isLegacyMakeupForm) continue;
+    // NOTE: the literal "Attendance (Makeup): Class " is the historical title of
+    // on-demand forms created by older versions. Real files with this exact name
+    // may still be in Drive, so this matcher string MUST stay verbatim to detect
+    // and clean them — only the terminology in the variable name is updated.
+    var isLegacyOnDemandForm = title.indexOf("Attendance (Makeup): Class ") === 0;
+    if (!isDailyAttendanceForm && !isOnDemandAttendanceForm && !isLegacyOnDemandForm) continue;
     if (activeFormIds[fid]) continue;
 
     try {

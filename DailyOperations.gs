@@ -175,7 +175,7 @@ function manual_sendOnDemandForm() {
   var formTitleDate = Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "dd-MM-yyyy");
   var formTitle = "On-Demand Attendance Form: Class " + CLASS_NUM + "-" + SECTION.toUpperCase() + " (" + formTitleDate + ")";
   var form = FormApp.create(formTitle);
-  form.setDescription("Makeup form for " + dateStr);
+  form.setDescription("On-demand form for " + dateStr);
   // VERIFIED = auto-capture the signed-in account email as read-only (see note
   // in automated_sendDailyForms). Requires Google login by definition.
   form.setEmailCollectionType(FormApp.EmailCollectionType.VERIFIED);
@@ -208,7 +208,7 @@ function manual_sendOnDemandForm() {
 
   var mailOptions = {
     to: teacherEmail,
-    subject: "📋 Makeup Attendance Form: Class " + CLASS_NUM + "-" + SECTION.toUpperCase() + " (" + dateStr + ")",
+    subject: "📋 On-Demand Attendance Form: Class " + CLASS_NUM + "-" + SECTION.toUpperCase() + " (" + dateStr + ")",
     htmlBody: htmlBody
   };
 
@@ -217,7 +217,7 @@ function manual_sendOnDemandForm() {
   }
 
   MailApp.sendEmail(mailOptions);
-  Logger.log("✅ Ad-hoc form sent to: " + teacherEmail);
+  Logger.log("✅ On-demand form sent to: " + teacherEmail);
 }
 
 // =========================================================================

@@ -40,7 +40,7 @@ A reset must consider three places, but **only the workbooks hold data/visualiza
 |----------|--------|---------|
 | Attendance workbook (**KEEP for A/B**) | `Class_<classNum>_<SECTION>_<ACADEMIC_YEAR>` | `Class_1_A_2026-2027` |
 | Daily form | `Attendance: Class <classNum>-<SECTION> (<dd-MMM-yyyy>)` | `Attendance: Class 1-A (25-Jul-2026)` |
-| On-demand (makeup) form | `On-Demand Attendance Form: Class <classNum>-<SECTION> (<dd-MMM-yyyy>)` | `On-Demand Attendance Form: Class 5-A (25-Jul-2026)` |
+| On-demand form | `On-Demand Attendance Form: Class <classNum>-<SECTION> (<dd-MMM-yyyy>)` | `On-Demand Attendance Form: Class 5-A (25-Jul-2026)` |
 
 > ℹ️ Older forms named `Attendance (Makeup): Class …` may still exist from earlier
 > runs; the cleanup routines recognize and trash that legacy name too.
@@ -56,7 +56,7 @@ A reset must consider three places, but **only the workbooks hold data/visualiza
 | `ACTIVE_FORM_<ssId>` | `automated_sendDailyForms`, `manual_sendOnDemandForm` | `automated_closeForms` (nightly) | Which form is live for a workbook |
 | `AUTHORIZED_TEACHER_<ssId>` | `automated_sendDailyForms`, `manual_sendOnDemandForm` | ⚠️ **never** (leaks) → cleared only by reset B/C | Which teacher email may submit |
 | `NOTIFIED_<ssId>` | `notifySubmitters` (during sync) | `automated_closeForms` (nightly) | Per-day dedup so each teacher emailed once/day |
-| `FORM_TARGET_DATE_<formId>` | `manual_sendOnDemandForm` | `manual_closeOnDemandForm`, reset B/C | Which past date an on-demand (makeup) form records for |
+| `FORM_TARGET_DATE_<formId>` | `manual_sendOnDemandForm` | `manual_closeOnDemandForm`, reset B/C | Which past date an on-demand form records for |
 | `FLOW1_TOKEN` / `FLOW2_TOKEN` / `FLOW3_TOKEN` | setup batch functions | `manual_resetExecutionTokens`, reset B/C | Batch continuation tokens (setup only) |
 
 ---
