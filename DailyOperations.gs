@@ -30,6 +30,15 @@ function automated_sendDailyForms() {
     var teacherName = teacherMapping[mapKey].name;
     var teacherEmail = teacherMapping[mapKey].email;
 
+    // Teacher Lead(s) for this class, resolved from the Drive config
+    // (teacherLeads → teacherClassMapping) via buildMasterConfig. classMap keys
+    // are "<classNum>_<SECTION>" with the section uppercased. The lead value may
+    // be comma-separated; normalize to a clean CC list. Null/empty → no CC.
+    var classCfg = masterConfig.classMap[classNum + "_" + section.toUpperCase()];
+    var leadCc = (classCfg && classCfg.lead)
+      ? classCfg.lead.split(",").map(function(e) { return e.trim(); }).filter(function(e) { return e !== ""; }).join(",")
+      : "";
+
     var ssName = getWorkbookName(classNum, section);
     var existingSsArray = outputFolder.getFilesByName(ssName);
     var ss, ssFile;
@@ -104,12 +113,15 @@ function automated_sendDailyForms() {
       htmlBody: htmlBody
     };
 
+    // CC the Teacher Lead(s) so they receive the same daily form + alert blocks.
+    if (leadCc) mailOptions.cc = leadCc;
+
     if (alertsResult.teacherBlob) {
       mailOptions.inlineImages = { teacher_chart: alertsResult.teacherBlob };
     }
 
     MailApp.sendEmail(mailOptions);
-    Logger.log("✅ Sent: " + teacherEmail + " | Class " + classNum + "-" + section);
+    Logger.log("✅ Sent: " + teacherEmail + (leadCc ? " | CC lead: " + leadCc : "") + " | Class " + classNum + "-" + section);
   }
 }
 
