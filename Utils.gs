@@ -1397,7 +1397,7 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId, 
       }
     }
 
-    // AUTHORIZATION: only the class's assigned teacher may set attendance.
+    // AUTHORIZATION: the class's assigned teacher or Teacher Lead may set attendance.
     // We enforce this here (in the hourly sync) instead of via a per-form
     // onFormSubmit trigger, because one form-submit trigger per class would
     // exceed Apps Script's 20-trigger-per-user cap. Trade-off: an unauthorized
@@ -1405,16 +1405,19 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId, 
     var authorizedEmail = PropertiesService.getScriptProperties()
       .getProperty('AUTHORIZED_TEACHER_' + ssId);
     authorizedEmail = authorizedEmail ? authorizedEmail.toLowerCase().trim() : null;
+    var authorizedEmails = authorizedEmail
+      ? authorizedEmail.split(",").map(function(e) { return e.trim(); }).filter(function(e) { return e !== ""; })
+      : [];
 
     // Pick the LATEST response submitted BY the authorized teacher. Scanning
     // newest-first means an unauthorized submission can neither overwrite nor
     // block the legitimate one.
     var chosenResponse = null;
     for (var ri = responses.length - 1; ri >= 0; ri--) {
-      if (!authorizedEmail) { chosenResponse = responses[ri]; break; } // no guard configured -> latest wins
+      if (authorizedEmails.length === 0) { chosenResponse = responses[ri]; break; } // no guard configured -> latest wins
       var respEmail = responses[ri].getRespondentEmail();
       respEmail = respEmail ? respEmail.toLowerCase().trim() : "";
-      if (respEmail === authorizedEmail) { chosenResponse = responses[ri]; break; }
+      if (authorizedEmails.indexOf(respEmail) !== -1) { chosenResponse = responses[ri]; break; }
     }
 
     // Email each submitter a single accept/reject confirmation per day. Deduped
@@ -1425,7 +1428,7 @@ function executeSheetSyncProcessing(sheet, activeFormId, dayOfMonthDigit, ssId, 
 
     if (!chosenResponse) {
       Logger.log("      [SYNC][REJECTED] '" + sheet.getName() + "' day " + dayOfMonthDigit +
-                 ": " + responses.length + " response(s) present but none from the authorized teacher (" +
+                 ": " + responses.length + " response(s) present but none from an authorized teacher or lead (" +
                  (authorizedEmail || "none set") + "). Nothing written.");
       return;
     }
@@ -1520,7 +1523,10 @@ function notifySubmitters(ssId, responses, authorizedEmail, sheetName, dayOfMont
     }
     if (notified.indexOf(email) !== -1) continue;      // already emailed today
 
-    var isAccepted = (!authorizedEmail) || (email === authorizedEmail);
+    var authorizedEmails = authorizedEmail
+      ? authorizedEmail.split(",").map(function(e) { return e.trim(); }).filter(function(e) { return e !== ""; })
+      : [];
+    var isAccepted = authorizedEmails.length === 0 || authorizedEmails.indexOf(email) !== -1;
 
     // Summarize exactly what THIS submitter marked, so the email echoes the
     // attendance back to them. For an accepted submission this is what was
@@ -1596,7 +1602,7 @@ function buildSyncConfirmationHtml(isAccepted, authorizedEmail, sheetName, dayOf
     ? "Your attendance for <strong>" + classLabel + "</strong> on " + sheetName + " " + dayOfMonthDigit +
       " has been recorded successfully."
     : "You are not authorized to submit attendance for <strong>" + classLabel + "</strong>, so your submission was not recorded." +
-      (authorizedEmail ? " Only " + authorizedEmail + " can submit for this class." : "");
+      (authorizedEmail ? " Only the assigned teacher or Teacher Lead can submit for this class." : "");
 
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>';
   html += '<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">';
@@ -1857,7 +1863,11 @@ function updateDashboard(ss) {
     const rateVal = s.total > 0 ? ((s.present + s.late) / s.total * 100) : 0;
     const rateStr = rateVal.toFixed(2);
 
-    let red = "", yellow = "", green = "";
+    // Keep every risk-band series numeric. If a band is entirely blank, Google
+    // Sheets omits that series and shifts later colors left (yellow becomes red,
+    // green becomes yellow). Zero values preserve all three series without
+    // adding visible segments to the stacked bar.
+    let red = 0, yellow = 0, green = 0;
     if (rateVal < 40) red = rateVal;
     else if (rateVal <= 75) yellow = rateVal;
     else green = rateVal;

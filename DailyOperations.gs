@@ -105,7 +105,10 @@ function automated_sendDailyForms() {
     var liveUrl = form.getPublishedUrl();
     var props = PropertiesService.getScriptProperties();
     props.setProperty('ACTIVE_FORM_' + ss.getId(), form.getId());
-    props.setProperty('AUTHORIZED_TEACHER_' + ss.getId(), teacherEmail.toLowerCase());
+    var authorizedEmails = [teacherEmail].concat(leadCc ? leadCc.split(",") : [])
+      .map(function(e) { return e.trim().toLowerCase(); })
+      .filter(function(e, i, all) { return e !== "" && all.indexOf(e) === i; });
+    props.setProperty('AUTHORIZED_TEACHER_' + ss.getId(), authorizedEmails.join(","));
 
     // Store the target date for this form (for consistency with on-demand forms)
     // Format: YYYY-MM-DD for reliable parsing
