@@ -47,6 +47,13 @@ function automated_sendDailyForms() {
     var ssName = getWorkbookName(classNum, section);
     var existingSsArray = outputFolder.getFilesByName(ssName);
     var ss, ssFile;
+    var parsedRoster = parseAndNormalizeData(rosterFile, false);
+    var activeRosterRows = parsedRoster.filter(function(row) { return row[3] === "active"; });
+
+    if (activeRosterRows.length === 0) {
+      Logger.log("[SKIP] No active students in roster " + fileName);
+      continue;
+    }
 
     if (existingSsArray.hasNext()) {
       Logger.log("[STEP] Opening existing workbook: " + ssName);
@@ -58,9 +65,8 @@ function automated_sendDailyForms() {
       ssFile = DriveApp.getFileById(ss.getId());
       ssFile.moveTo(outputFolder);
 
-      var rosterData = parseAndNormalizeData(rosterFile, false);
       var monthsToCreate = getAcademicMonthsList(ACADEMIC_YEAR, START_MONTH, END_MONTH);
-      buildAttendanceWorkbook(ss, rosterData, monthsToCreate, holidays);
+      buildAttendanceWorkbook(ss, activeRosterRows, monthsToCreate, holidays);
       applyPermissionsToSpreadsheet(ssFile, classNum, section, masterConfig);
       Logger.log("[STEP] Built new workbook: " + ssName);
     }
@@ -69,13 +75,10 @@ function automated_sendDailyForms() {
     var sheet = ss.getSheetByName(monthName);
     if (!sheet) { Logger.log("[SKIP] No sheet for month " + monthName + " in " + ssName); continue; }
 
-    var studentNamesRange = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
-    var studentNames = [];
-    for (var r = 0; r < studentNamesRange.length; r++) {
-      if (studentNamesRange[r][0].toString().trim() !== "") {
-        studentNames.push(studentNamesRange[r][0].toString().trim());
-      }
-    }
+    var activeRosterStudents = activeRosterRows
+      .map(function(row) { return { childId: row[1].toString().trim(), name: row[2].toString().trim() }; });
+    var activeStudents = getActiveWorkbookStudents(sheet, activeRosterStudents);
+    var studentNames = activeStudents.map(function(student) { return student.name; });
 
     if (studentNames.length === 0) { Logger.log("[SKIP] No students in " + ssName); continue; }
     Logger.log("[STEP] " + studentNames.length + " student(s). Creating form...");
@@ -116,7 +119,7 @@ function automated_sendDailyForms() {
     props.setProperty('FORM_TARGET_DATE_' + form.getId(), todayKey);
 
     Logger.log("[STEP] Generating alert blocks...");
-    var alertsResult = generateAlertBlocks(ss, sheet, studentNames, today);
+    var alertsResult = generateAlertBlocks(ss, sheet, activeStudents, today);
     Logger.log("[STEP] Alert blocks done; building email...");
     var teacherAlertsHtml = alertsResult.teacherHtml || "";
 
@@ -180,13 +183,9 @@ function manual_sendOnDemandForm() {
   var sheet = ss.getSheetByName(monthName);
   if (!sheet) throw new Error("No sheet for " + monthName);
 
-  var studentNamesRange = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
-  var studentNames = [];
-  for (var r = 0; r < studentNamesRange.length; r++) {
-    if (studentNamesRange[r][0].toString().trim() !== "") {
-      studentNames.push(studentNamesRange[r][0].toString().trim());
-    }
-  }
+  var activeStudents = getActiveWorkbookStudents(sheet, getActiveRosterStudents(CLASS_NUM, SECTION));
+  var studentNames = activeStudents.map(function(student) { return student.name; });
+  if (studentNames.length === 0) throw new Error("No active students found for " + CLASS_NUM + "-" + SECTION);
 
   var formTitleDate = Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "dd-MM-yyyy");
   var formTitle = "On-Demand Attendance Form: Class " + CLASS_NUM + "-" + SECTION.toUpperCase() + " (" + formTitleDate + ")";
@@ -218,7 +217,7 @@ function manual_sendOnDemandForm() {
   var targetDateKey = Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
   props.setProperty('FORM_TARGET_DATE_' + form.getId(), targetDateKey);
 
-  var alertsResult = generateAlertBlocks(ss, sheet, studentNames, targetDate);
+  var alertsResult = generateAlertBlocks(ss, sheet, activeStudents, targetDate);
   var teacherAlertsHtml = alertsResult.teacherHtml || "";
   var htmlBody = buildSimpleHtmlEmail(dateStr, CLASS_NUM, SECTION, teacherName, liveUrl, teacherAlertsHtml);
 
@@ -612,21 +611,22 @@ function automated_sendWeeklyReport() {
     if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
 
     var ss = SpreadsheetApp.openById(file.getId());
+    var wbParts = ss.getName().split("_");
+    if (wbParts.length < 3) continue;
     var monthName = today.toLocaleString('en-US', { month: 'long' });
     var sheet = ss.getSheetByName(monthName);
     if (!sheet) continue;
 
-    var studentNamesRange = sheet.getRange(2, 3, sheet.getLastRow() - 1, 1).getValues();
-    var studentNames = [];
-    for (var r = 0; r < studentNamesRange.length; r++) {
-      if (studentNamesRange[r][0].toString().trim() !== "") {
-        studentNames.push(studentNamesRange[r][0].toString().trim());
-      }
+    var activeStudents;
+    try {
+      activeStudents = getActiveWorkbookStudents(sheet, getActiveRosterStudents(wbParts[1], wbParts[2]));
+    } catch (rosterErr) {
+      Logger.log("[WEEKLY][SKIP] " + file.getName() + ": " + rosterErr.message);
+      continue;
     }
+    if (activeStudents.length === 0) continue;
 
-    if (studentNames.length === 0) continue;
-
-    var alertsResult = generateAlertBlocks(ss, sheet, studentNames, today);
+    var alertsResult = generateAlertBlocks(ss, sheet, activeStudents, today);
     if (alertsResult.stakeholderHtml && alertsResult.stakeholderHtml !== "") {
       digestContent += '<h3 style="color: #2d3748; margin-top: 25px;">' + file.getName() + '</h3>';
       // Each workbook's chart needs a UNIQUE inline-image CID, otherwise all

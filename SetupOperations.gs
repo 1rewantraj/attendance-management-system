@@ -61,7 +61,7 @@ function manual_generateSheets() {
     }
     
     Logger.log("--> Processing roster: " + fileName);
-    var rosterData = parseAndNormalizeData(file);
+    var rosterData = parseAndNormalizeData(file).filter(function(row) { return row[3] === "active"; });
     if (rosterData.length === 0) {
       Logger.log("    [!] No valid student data found. Skipping.");
       continue;
@@ -170,9 +170,12 @@ function manual_updateSheets() {
         }
       }
 
-      // New students = roster entries whose Child ID (row[1]) isn't already present.
+      // Add only active students. Inactive students already in the workbook are
+      // retained so their historical attendance remains available.
       var newEntries = csvRoster.filter(function(row) {
-        return existingIds.indexOf(row[1].toString().trim()) === -1;
+        return row[3] === "active" && existingIds.indexOf(row[1].toString().trim()) === -1;
+      }).map(function(row) {
+        return [row[0], row[1], row[2]];
       });
 
       var daysInMonth = new Date(monthInfo.year, monthInfo.monthIndex + 1, 0).getDate();

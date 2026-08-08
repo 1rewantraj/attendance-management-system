@@ -46,7 +46,9 @@ Sheet**.
   - `Class 5 B`
   - `Grade 7 C`
 - **Inside the file**, use a header row with these columns (in any order):
-  **Roll No.**, **Child ID**, **Name of Student**. One row per student.
+  **Roll No.**, **Child ID**, **Name of Student**, **Status**. Set Status to
+  **Active** or **Inactive**. Inactive students retain their historical attendance
+  but are excluded from new forms and current attendance-risk alerts.
 
 ### In the "Settings" folder — the teacher list (required)
 

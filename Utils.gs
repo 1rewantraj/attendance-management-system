@@ -175,16 +175,17 @@ function parseAndNormalizeData(file, returnRaw) {
   if (rawRows.length === 0) return [];
   if (returnRaw) return rawRows;
 
-  var hasHeader = false, rollNoIdx = -1, childIdIdx = -1, nameIdx = -1;
+  var hasHeader = false, rollNoIdx = -1, childIdIdx = -1, nameIdx = -1, statusIdx = -1;
   var firstRowStr = rawRows[0].join(" ").toLowerCase();
 
-  if (firstRowStr.includes("child") || firstRowStr.includes("name") || firstRowStr.includes("roll")) {
+  if (firstRowStr.includes("child") || firstRowStr.includes("name") || firstRowStr.includes("roll") || firstRowStr.includes("status")) {
     hasHeader = true;
     for (var c = 0; c < rawRows[0].length; c++) {
       var cellLower = rawRows[0][c].toString().trim().toLowerCase();
       if (cellLower.includes("roll")) rollNoIdx = c;
       else if (cellLower.includes("child")) childIdIdx = c;
       else if (cellLower.includes("student") || cellLower.includes("name")) nameIdx = c;
+      else if (cellLower === "status" || cellLower === "student status" || cellLower === "enrollment status") statusIdx = c;
     }
     rawRows.shift();
   }
@@ -196,9 +197,57 @@ function parseAndNormalizeData(file, returnRaw) {
     var childId = hasHeader && childIdIdx !== -1 ? row[childIdIdx].toString().trim() : row[0].toString().trim();
     var studentName = hasHeader && nameIdx !== -1 ? row[nameIdx].toString().trim() : row[1].toString().trim();
     var rollNo = hasHeader && rollNoIdx !== -1 && row[rollNoIdx].toString().trim() ? row[rollNoIdx].toString().trim() : (i + 1).toString();
-    normalizedData.push([rollNo, childId, studentName]);
+    var status = hasHeader && statusIdx !== -1 ? row[statusIdx].toString().trim().toLowerCase() : "active";
+    if (status === "") status = "active";
+    if (status !== "active" && status !== "inactive") {
+      Logger.log("    [WARNING] Skipping student '" + studentName + "': invalid Status '" + status + "'. Use Active or Inactive.");
+      continue;
+    }
+    normalizedData.push([rollNo, childId, studentName, status]);
   }
   return normalizedData;
+}
+
+function getActiveRosterStudents(classNum, section) {
+  var rosterFolder = getFolderByLink(STUDENT_CLASS_LIST_FOLDER_LINK);
+  var files = rosterFolder.getFiles();
+  var classKey = classNum.toString().toLowerCase() + "_" + section.toString().toLowerCase();
+
+  while (files.hasNext()) {
+    var file = files.next();
+    var mimeType = file.getMimeType();
+    if (mimeType !== MimeType.CSV && mimeType !== MimeType.MICROSOFT_EXCEL &&
+        mimeType !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" &&
+        mimeType !== MimeType.GOOGLE_SHEETS) continue;
+
+    var parsed = parseClassAndSectionFromText(file.getName());
+    var fileKey = parsed.classNum.toString().toLowerCase() + "_" + parsed.section.toString().toLowerCase();
+    if (fileKey !== classKey) continue;
+
+    return parseAndNormalizeData(file).filter(function(row) {
+      return row[3] === "active" && row[1].toString().trim() !== "";
+    }).map(function(row) {
+      return { rollNo: row[0], childId: row[1].toString().trim(), name: row[2].toString().trim() };
+    });
+  }
+
+  throw new Error("No roster found for Class " + classNum + "-" + section.toString().toUpperCase());
+}
+
+function getActiveWorkbookStudents(sheet, activeRosterStudents) {
+  var activeById = {};
+  activeRosterStudents.forEach(function(student) { activeById[student.childId] = student; });
+  var students = [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return students;
+
+  var rows = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  rows.forEach(function(row, index) {
+    var childId = row[1].toString().trim();
+    if (!childId || !activeById[childId]) return;
+    students.push({ childId: childId, name: row[2].toString().trim(), rowNumber: index + 2 });
+  });
+  return students;
 }
 
 function parseClassAndSectionFromText(text) {
@@ -847,7 +896,8 @@ function buildAttendanceWorkbook(ss, rosterData, monthsToCreate, holidays) {
     headers.push("No of days Present", "No of days Absent", "No of days Late", "Total Attendance", "Total Present", "Percentage");
 
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sheet.getRange(2, 1, numStudents, 3).setValues(rosterData);
+    var workbookRows = rosterData.map(function(row) { return [row[0], row[1], row[2]]; });
+    sheet.getRange(2, 1, numStudents, 3).setValues(workbookRows);
 
     refreshFormulasAndStyles(sheet, numStudents, daysInMonth, monthInfo.year, monthInfo.monthIndex, monthInfo.name, holidays);
   }
@@ -995,7 +1045,8 @@ function buildVisualizations(sheet, totalStudents, daysInMonth) {
   sheet.insertChart(trendChart);
 }
 
-function generateAlertBlocks(ss, sheet, studentNames, today) {
+function generateAlertBlocks(ss, sheet, students, today) {
+  students = students || [];
   var MAX_LOOKBACK = Math.max(
     CONSECUTIVE_ABSENT_THRESHOLD_DAYS + ALLOWED_PRESENT_SKIPS,
     CONSECUTIVE_LATE_THRESHOLD_DAYS + ALLOWED_PRESENT_SKIPS,
@@ -1048,7 +1099,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     // a given day-column is an instructional (marked) day.
     var k = sh.getName();
     if (!sampleCache[k]) {
-      var rows = Math.min(5, Math.max(0, sh.getLastRow() - 1));
+      var rows = Math.max(0, sh.getLastRow() - 1);
       sampleCache[k] = rows > 0 ? sh.getRange(2, 1, rows, sh.getLastColumn()).getValues() : [];
     }
     return sampleCache[k];
@@ -1091,7 +1142,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     checkDayOffset--;
   }
 
-  Logger.log("    [ALERTS] Scanning " + studentNames.length + " student(s) across " +
+  Logger.log("    [ALERTS] Scanning " + students.length + " student(s) across " +
              validColumnsToCheck.length + " lookback column(s).");
 
   var teacherChartData = [];
@@ -1110,18 +1161,9 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     return { validCount: validCount, windowSize: windowSize };
   }
 
-  // Student IDs (Child ID, col B) aligned to the same rows the status loop
-  // scans (row = sIdx + 2), so every flagged entry can carry its ID for the
-  // inline email roster.
-  var studentIds = [];
-  try {
-    var idVals = sheet.getRange(2, 2, studentNames.length, 1).getValues();
-    for (var ii = 0; ii < idVals.length; ii++) studentIds.push(idVals[ii][0].toString().trim());
-  } catch (e) { studentIds = []; }
-
   // PERF: read each referenced sheet's student block ONCE, instead of one
   // getValue() per student-per-column. The old nested loop did
-  // studentNames.length × validColumnsToCheck.length individual round-trips
+  // students.length × validColumnsToCheck.length individual round-trips
   // (which can span several month tabs) — hundreds to thousands of calls that
   // stall the run. Here we cache one getValues() per distinct sheet and index
   // into it in memory. Grid is 0-based from row 2, so student sIdx → grid[sIdx]
@@ -1134,7 +1176,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
       // fewer students than the current roster, and reading past the last row
       // would throw. Rows absent from a shorter sheet index to undefined below
       // and are treated as "" (no status), which is correct.
-      var numRows = Math.min(studentNames.length, Math.max(0, sh.getLastRow() - 1));
+      var numRows = Math.max(0, sh.getLastRow() - 1);
       sheetGridCache[key] = numRows > 0
         ? sh.getRange(2, 1, numRows, sh.getLastColumn()).getValues()
         : [];
@@ -1142,11 +1184,27 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     return sheetGridCache[key];
   }
 
-  for (var sIdx = 0; sIdx < studentNames.length; sIdx++) {
+  var sheetRowByStudentId = {};
+  function getStudentRowIndex(sh, childId) {
+    var key = sh.getName();
+    if (!sheetRowByStudentId[key]) {
+      sheetRowByStudentId[key] = {};
+      getSheetGrid(sh).forEach(function(row, index) {
+        var id = row[1] == null ? "" : row[1].toString().trim();
+        if (id !== "") sheetRowByStudentId[key][id] = index;
+      });
+    }
+    return sheetRowByStudentId[key].hasOwnProperty(childId) ? sheetRowByStudentId[key][childId] : -1;
+  }
+
+  for (var sIdx = 0; sIdx < students.length; sIdx++) {
+    var student = students[sIdx];
     var statuses = [];
     for (var c = 0; c < validColumnsToCheck.length; c++) {
-      var grid = getSheetGrid(validColumnsToCheck[c].sheet);
-      var cellVal = grid[sIdx] ? grid[sIdx][validColumnsToCheck[c].colIndex - 1] : "";
+      var statusSheet = validColumnsToCheck[c].sheet;
+      var grid = getSheetGrid(statusSheet);
+      var rowIndex = getStudentRowIndex(statusSheet, student.childId);
+      var cellVal = rowIndex !== -1 ? grid[rowIndex][validColumnsToCheck[c].colIndex - 1] : "";
       statuses.push(cellVal == null ? "" : cellVal.toString().trim());
     }
 
@@ -1163,7 +1221,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
         if (statuses[w] === "Absent") aCount++;
         if (statuses[w] === "Late") lCount++;
       }
-      teacherChartData.push({ id: studentIds[sIdx] || "", name: studentNames[sIdx], absences: aCount, lates: lCount, total: aCount + lCount });
+      teacherChartData.push({ id: student.childId, name: student.name, absences: aCount, lates: lCount, total: aCount + lCount });
     }
 
     var daysToCheckAbsent = Math.min(statuses.length, ABSENT_LOOKBACK_DAYS);
@@ -1175,7 +1233,7 @@ function generateAlertBlocks(ss, sheet, studentNames, today) {
     for (var i = 0; i < daysToCheckLate; i++) { if (statuses[i] === "Late") lateCount++; }
 
     if (absentCount >= ABSENT_THRESHOLD_DAYS || lateCount >= LATE_THRESHOLD_DAYS) {
-      stakeholderChartData.push({ id: studentIds[sIdx] || "", name: studentNames[sIdx], absences: absentCount, lates: lateCount, total: absentCount + lateCount });
+      stakeholderChartData.push({ id: student.childId, name: student.name, absences: absentCount, lates: lateCount, total: absentCount + lateCount });
     }
   }
 
@@ -1904,17 +1962,21 @@ function updateDashboard(ss) {
   const currentMonthName = new Date().toLocaleString('en-US', { month: 'long' });
   const currentMonthSheet = ss.getSheetByName(currentMonthName);
   if (currentMonthSheet && currentMonthSheet.getLastRow() > 1) {
-    const nameRange = currentMonthSheet.getRange(2, 3, currentMonthSheet.getLastRow() - 1, 1).getValues();
-    const riskStudentNames = [];
-    nameRange.forEach(function(r) {
-      const nm = r[0].toString().trim();
-      if (nm !== '' && nm.toUpperCase().indexOf('CLASS AVERAGE') === -1 && nm.toUpperCase().indexOf('STATUS') === -1) {
-        riskStudentNames.push(nm);
+    const workbookParts = ss.getName().split('_');
+    let riskStudents = [];
+    if (workbookParts.length >= 3) {
+      try {
+        riskStudents = getActiveWorkbookStudents(
+          currentMonthSheet,
+          getActiveRosterStudents(workbookParts[1], workbookParts[2])
+        );
+      } catch (rosterErr) {
+        Logger.log("[DASHBOARD][WARNING] Could not load active roster for " + ss.getName() + ": " + rosterErr.message);
       }
-    });
+    }
 
-    if (riskStudentNames.length > 0) {
-      const alerts = generateAlertBlocks(ss, currentMonthSheet, riskStudentNames, new Date());
+    if (riskStudents.length > 0) {
+      const alerts = generateAlertBlocks(ss, currentMonthSheet, riskStudents, new Date());
       // Already sorted most-flags-first inside generateAlertBlocks.
       (alerts.stakeholderData || []).forEach(function(d) {
         riskData.push([d.name, d.absences, d.lates, d.total]);
