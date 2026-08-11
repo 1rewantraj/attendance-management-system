@@ -161,12 +161,15 @@ function manual_updateSheets() {
 
       // Count existing students: scan Child ID (col B) from row 2 until the
       // student block ends (blank ID, or Roll No. in col A is no longer numeric
-      // — i.e. we've hit the footer/CLASS AVERAGE rows).
+      // — i.e. we've hit the footer/CLASS AVERAGE rows). Cols A and B are read
+      // in one batch call each; a per-row getValue() call here was the same
+      // hang-prone pattern fixed for generateAlertBlocks in ce54c1f.
       if (lastRow > 1) {
+        var colAValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
         var colBValues = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
         for (var k = 0; k < colBValues.length; k++) {
           var id = colBValues[k][0].toString().trim();
-          if (id !== "" && !isNaN(sheet.getRange(k + 2, 1).getValue())) {
+          if (id !== "" && !isNaN(colAValues[k][0])) {
             existingIds.push(id);
             idToRow[id] = k + 2;
             currentStudentCount++;
