@@ -14,23 +14,18 @@ function automated_sendDailyForms() {
   var outputFolder = getFolderByLink(ATTENDANCE_SHEETS_FOLDER_LINK);
   
   var rosterFiles = rosterFolder.getFiles();
-  Logger.log("[STEP] Loading teacher mapping...");
   var teacherMapping = loadTeacherMapping();
-  Logger.log("[STEP] Building master config...");
   var masterConfig = buildMasterConfig(configFolder);
-  Logger.log("[STEP] Loading holidays (send flow)...");
   var holidays = getPublicHolidays(configFolder);
-  Logger.log("[STEP] Entering roster loop.");
 
   while (rosterFiles.hasNext()) {
     var rosterFile = rosterFiles.next();
     var fileName = rosterFile.getName();
-    Logger.log("[STEP] Roster file: " + fileName);
     var parsed = parseClassAndSectionFromText(fileName);
     var classNum = parsed.classNum, section = parsed.section;
     var mapKey = classNum.toLowerCase() + "_" + section.toLowerCase();
 
-    if (!teacherMapping[mapKey]) { Logger.log("[SKIP] No teacher mapping for " + mapKey); continue; }
+    if (!teacherMapping[mapKey]) continue;
 
     var teacherName = teacherMapping[mapKey].name;
     var teacherEmail = teacherMapping[mapKey].email;
@@ -50,17 +45,12 @@ function automated_sendDailyForms() {
     var parsedRoster = parseAndNormalizeData(rosterFile, false);
     var activeRosterRows = parsedRoster.filter(function(row) { return row[3] === "active"; });
 
-    if (activeRosterRows.length === 0) {
-      Logger.log("[SKIP] No active students in roster " + fileName);
-      continue;
-    }
+    if (activeRosterRows.length === 0) continue;
 
     if (existingSsArray.hasNext()) {
-      Logger.log("[STEP] Opening existing workbook: " + ssName);
       ssFile = existingSsArray.next();
       ss = SpreadsheetApp.openById(ssFile.getId());
     } else {
-      Logger.log("[STEP] Creating new workbook: " + ssName);
       ss = SpreadsheetApp.create(ssName);
       ssFile = DriveApp.getFileById(ss.getId());
       ssFile.moveTo(outputFolder);
@@ -68,20 +58,18 @@ function automated_sendDailyForms() {
       var monthsToCreate = getAcademicMonthsList(ACADEMIC_YEAR, START_MONTH, END_MONTH);
       buildAttendanceWorkbook(ss, activeRosterRows, monthsToCreate, holidays);
       applyPermissionsToSpreadsheet(ssFile, classNum, section, masterConfig);
-      Logger.log("[STEP] Built new workbook: " + ssName);
     }
 
     var monthName = today.toLocaleString('en-US', { month: 'long' });
     var sheet = ss.getSheetByName(monthName);
-    if (!sheet) { Logger.log("[SKIP] No sheet for month " + monthName + " in " + ssName); continue; }
+    if (!sheet) continue;
 
     var activeRosterStudents = activeRosterRows
       .map(function(row) { return { childId: row[1].toString().trim(), name: row[2].toString().trim() }; });
     var activeStudents = getActiveWorkbookStudents(sheet, activeRosterStudents);
     var studentNames = activeStudents.map(function(student) { return student.name; });
 
-    if (studentNames.length === 0) { Logger.log("[SKIP] No students in " + ssName); continue; }
-    Logger.log("[STEP] " + studentNames.length + " student(s). Creating form...");
+    if (studentNames.length === 0) continue;
 
     var formTitle = "Attendance: Class " + classNum + "-" + section.toUpperCase() + " (" + todayStr + ")";
     var form = FormApp.create(formTitle);
@@ -100,7 +88,6 @@ function automated_sendDailyForms() {
     gridItem.setColumns(['Present', 'Absent', 'Late']);
     gridItem.setRequired(true);
 
-    Logger.log("[STEP] Form built; moving + linking to workbook...");
     var formFile = DriveApp.getFileById(form.getId());
     formFile.moveTo(outputFolder);
     form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
@@ -118,9 +105,7 @@ function automated_sendDailyForms() {
     var todayKey = Utilities.formatDate(today, Session.getScriptTimeZone(), "yyyy-MM-dd");
     props.setProperty('FORM_TARGET_DATE_' + form.getId(), todayKey);
 
-    Logger.log("[STEP] Generating alert blocks...");
     var alertsResult = generateAlertBlocks(ss, sheet, activeStudents, today);
-    Logger.log("[STEP] Alert blocks done; building email...");
     var teacherAlertsHtml = alertsResult.teacherHtml || "";
 
     var htmlBody = buildSimpleHtmlEmail(todayStr, classNum, section, teacherName, liveUrl, teacherAlertsHtml);
@@ -138,7 +123,6 @@ function automated_sendDailyForms() {
       mailOptions.inlineImages = { teacher_chart: alertsResult.teacherBlob };
     }
 
-    Logger.log("[STEP] Sending email...");
     MailApp.sendEmail(mailOptions);
     Logger.log("✅ Sent: " + teacherEmail + (leadCc ? " | CC lead: " + leadCc : "") + " | Class " + classNum + "-" + section);
   }
@@ -604,6 +588,7 @@ function automated_sendWeeklyReport() {
 
   var digestContent = "";
   var allCharts = [];
+  var managerEmailsSeen = {};
   var files = outputFolder.getFiles();
 
   while (files.hasNext()) {
@@ -613,13 +598,14 @@ function automated_sendWeeklyReport() {
     var ss = SpreadsheetApp.openById(file.getId());
     var wbParts = ss.getName().split("_");
     if (wbParts.length < 3) continue;
+    var classNum = wbParts[1], section = wbParts[2];
     var monthName = today.toLocaleString('en-US', { month: 'long' });
     var sheet = ss.getSheetByName(monthName);
     if (!sheet) continue;
 
     var activeStudents;
     try {
-      activeStudents = getActiveWorkbookStudents(sheet, getActiveRosterStudents(wbParts[1], wbParts[2]));
+      activeStudents = getActiveWorkbookStudents(sheet, getActiveRosterStudents(classNum, section));
     } catch (rosterErr) {
       Logger.log("[WEEKLY][SKIP] " + file.getName() + ": " + rosterErr.message);
       continue;
@@ -627,18 +613,45 @@ function automated_sendWeeklyReport() {
     if (activeStudents.length === 0) continue;
 
     var alertsResult = generateAlertBlocks(ss, sheet, activeStudents, today);
-    if (alertsResult.stakeholderHtml && alertsResult.stakeholderHtml !== "") {
-      digestContent += '<h3 style="color: #2d3748; margin-top: 25px;">' + file.getName() + '</h3>';
-      // Each workbook's chart needs a UNIQUE inline-image CID, otherwise all
-      // blocks reference the same "stakeholder_chart_cid" and the images
-      // collide / render broken. generateAlertBlocks emits the placeholder
-      // src="cid:stakeholder_chart_cid"; swap it here for a per-file CID that
-      // matches what we register in allCharts below.
-      var uniqueCid = 'stakeholder_chart_cid_' + file.getId();
-      digestContent += alertsResult.stakeholderHtml.replace('cid:stakeholder_chart_cid', 'cid:' + uniqueCid);
+    if (!alertsResult.stakeholderHtml || alertsResult.stakeholderHtml === "") continue;
+
+    var classLabel = "Class " + classNum + "-" + section.toString().toUpperCase();
+    var classCfg = masterConfig.classMap[classNum + "_" + section.toString().toUpperCase()];
+
+    // PER-CLASS REPORT: this class's chronic-alert block only, to its Teacher Lead.
+    if (classCfg && classCfg.lead) {
+      var leadHtml = buildStakeholderDigestHtml(todayStr,
+        '<h3 style="color: #2d3748; margin-top: 0;">' + classLabel + '</h3>' + alertsResult.stakeholderHtml);
+      var leadMailOptions = {
+        to: classCfg.lead,
+        subject: "📊 Weekly Attendance Report - " + classLabel + " (" + todayStr + ")",
+        htmlBody: leadHtml
+      };
       if (alertsResult.stakeholderBlob) {
-        allCharts.push({ cid: uniqueCid, blob: alertsResult.stakeholderBlob });
+        leadMailOptions.inlineImages = { stakeholder_chart_cid: alertsResult.stakeholderBlob };
       }
+      MailApp.sendEmail(leadMailOptions);
+      Logger.log("✅ Class report sent to lead: " + classCfg.lead + " | " + classLabel);
+    }
+
+    if (classCfg && classCfg.manager) {
+      classCfg.manager.split(",").forEach(function(e) {
+        var em = e.trim().toLowerCase();
+        if (em !== "") managerEmailsSeen[em] = true;
+      });
+    }
+
+    // CONSOLIDATED DIGEST: every class's block, folded into one combined report below.
+    digestContent += '<h3 style="color: #2d3748; margin-top: 25px;">' + classLabel + '</h3>';
+    // Each workbook's chart needs a UNIQUE inline-image CID, otherwise all
+    // blocks reference the same "stakeholder_chart_cid" and the images
+    // collide / render broken. generateAlertBlocks emits the placeholder
+    // src="cid:stakeholder_chart_cid"; swap it here for a per-file CID that
+    // matches what we register in allCharts below.
+    var uniqueCid = 'stakeholder_chart_cid_' + file.getId();
+    digestContent += alertsResult.stakeholderHtml.replace('cid:stakeholder_chart_cid', 'cid:' + uniqueCid);
+    if (alertsResult.stakeholderBlob) {
+      allCharts.push({ cid: uniqueCid, blob: alertsResult.stakeholderBlob });
     }
   }
 
@@ -648,7 +661,14 @@ function automated_sendWeeklyReport() {
   }
 
   var htmlBody = buildStakeholderDigestHtml(todayStr, digestContent);
-  var recipientList = STAKEHOLDER_EMAILS.split(",").map(function(email) { return email.trim(); });
+  var recipientList = STAKEHOLDER_EMAILS.split(",")
+    .map(function(email) { return email.trim().toLowerCase(); })
+    .filter(function(e) { return e !== ""; });
+  // Fold in every Program Manager whose class had a chronic alert this week,
+  // so the consolidated send reaches managers + stakeholders in one email.
+  Object.keys(managerEmailsSeen).forEach(function(email) {
+    if (recipientList.indexOf(email) === -1) recipientList.push(email);
+  });
 
   if (recipientList.length === 0) {
     Logger.log("No stakeholders configured.");
@@ -670,7 +690,7 @@ function automated_sendWeeklyReport() {
   }
 
   MailApp.sendEmail(mailOptions);
-  Logger.log("✅ Stakeholder report sent to: " + recipientList.join(", "));
+  Logger.log("✅ Consolidated report sent to managers & stakeholders: " + recipientList.join(", "));
 }
 
 // =========================================================================

@@ -140,12 +140,7 @@ function getExcelDataFromFolder(folder, fileNameMatch) {
   var matches = comprehensiveFileSearch(fileNameMatch, folder);
   if (matches.length > 0) {
     var bestFile = matches[0];
-    Logger.log("    [MATCH FOUND] Keyword '" + fileNameMatch + "' matched to: " + bestFile.getName() +
-               " (mime: " + bestFile.getMimeType() + "; " + matches.length + " candidate(s))");
-    var parsed = parseAndNormalizeData(bestFile, true);
-    Logger.log("    [PARSE DONE] '" + bestFile.getName() + "' → " +
-               (parsed ? parsed.length : 0) + " raw row(s).");
-    return parsed;
+    return parseAndNormalizeData(bestFile, true);
   }
   return null;
 }
@@ -158,7 +153,6 @@ function parseAndNormalizeData(file, returnRaw) {
     var fileString = file.getBlob().getDataAsString();
     rawRows = Utilities.parseCsv(fileString);
   } else if (mimeType === MimeType.MICROSOFT_EXCEL || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
-    Logger.log("    [XLSX CONVERT] Copying '" + file.getName() + "' to a temp Google Sheet...");
     var tempFile = Drive.Files.copy(
       {title: "Temp_" + file.getName(), mimeType: MimeType.GOOGLE_SHEETS},
       file.getId()
@@ -166,7 +160,6 @@ function parseAndNormalizeData(file, returnRaw) {
     var tempSs = SpreadsheetApp.openById(tempFile.id);
     rawRows = tempSs.getSheets()[0].getDataRange().getValues();
     DriveApp.getFileById(tempFile.id).setTrashed(true);
-    Logger.log("    [XLSX CONVERT DONE] Read " + rawRows.length + " row(s).");
   } else if (mimeType === MimeType.GOOGLE_SHEETS) {
     var tempSs = SpreadsheetApp.openById(file.getId());
     rawRows = tempSs.getSheets()[0].getDataRange().getValues();
@@ -718,7 +711,6 @@ function getPublicHolidays(configFolder) {
   var holidays = [];
   var data = getExcelDataFromFolder(configFolder, HOLIDAY_FILE_NAME);
   if (!data || data.length < 2) return holidays;
-  Logger.log("    [HOLIDAYS] Parsing " + (data.length - 1) + " holiday row(s)...");
 
   var header = data[0].map(function(h) { return h.toString().toLowerCase().trim(); });
   
@@ -799,7 +791,6 @@ function getPublicHolidays(configFolder) {
     }
   }
 
-  Logger.log("    [HOLIDAYS] Done. " + holidays.length + " holiday date(s) collected.");
   return holidays;
 }
 
@@ -1170,7 +1161,6 @@ function generateAlertBlocks(ss, sheet, students, today) {
   }
 
   visitedSheets[scanSheet.getName()] = true;
-  Logger.log("    [ALERTS] Discovering lookback columns (target " + MAX_LOOKBACK + ")...");
 
   while (validColumnsToCheck.length < MAX_LOOKBACK) {
     if (checkDayOffset < 1) {
@@ -1205,9 +1195,6 @@ function generateAlertBlocks(ss, sheet, students, today) {
     }
     checkDayOffset--;
   }
-
-  Logger.log("    [ALERTS] Scanning " + students.length + " student(s) across " +
-             validColumnsToCheck.length + " lookback column(s).");
 
   var teacherChartData = [];
   var stakeholderChartData = [];

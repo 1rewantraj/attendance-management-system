@@ -51,7 +51,6 @@ function manual_generateSheets() {
     }
     
     var fileName = file.getName();
-    Logger.log(fileName);
     var info = parseClassAndSectionFromText(fileName);
     var targetSpreadsheetName = getWorkbookName(info.classNum, info.section);
     
