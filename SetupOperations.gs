@@ -92,11 +92,15 @@ function manual_updateSheets() {
   Logger.log("--> Loading Master Configurations & Holidays...");
   var masterConfig = buildMasterConfig(configFolder);
   var holidays = getPublicHolidays(configFolder);
-  
+
+  if (UPDATE_SHEETS_CLASS_FILTER && UPDATE_SHEETS_SECTION_FILTER) {
+    Logger.log("--> [FILTER ACTIVE] Only updating Class " + UPDATE_SHEETS_CLASS_FILTER + "-" + UPDATE_SHEETS_SECTION_FILTER.toString().toUpperCase());
+  }
+
   var props = PropertiesService.getScriptProperties();
   var token = props.getProperty('FLOW2_TOKEN');
   var files;
-  
+
   if (token) {
     try {
       files = DriveApp.continueFileIterator(token);
@@ -107,7 +111,7 @@ function manual_updateSheets() {
   } else {
     files = inputFolder.getFiles();
   }
-  
+
   var today = new Date();
   var todayYear = today.getFullYear(), todayMonth = today.getMonth(), todayDay = today.getDate();
   
@@ -124,6 +128,13 @@ function manual_updateSheets() {
     if (mimeType !== MimeType.CSV && mimeType !== MimeType.MICROSOFT_EXCEL && mimeType !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" && mimeType !== MimeType.GOOGLE_SHEETS) continue;
     
     var info = parseClassAndSectionFromText(file.getName());
+
+    if (UPDATE_SHEETS_CLASS_FILTER && UPDATE_SHEETS_SECTION_FILTER) {
+      var classMatches = info.classNum.toString().trim() === UPDATE_SHEETS_CLASS_FILTER.toString().trim();
+      var sectionMatches = info.section.toString().trim().toUpperCase() === UPDATE_SHEETS_SECTION_FILTER.toString().trim().toUpperCase();
+      if (!classMatches || !sectionMatches) continue;
+    }
+
     var targetSpreadsheetName = getWorkbookName(info.classNum, info.section);
     var ssFiles = outputFolder.getFilesByName(targetSpreadsheetName);
 

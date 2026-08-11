@@ -36,6 +36,12 @@ var CHRONIC_MISHAP_LOOKBACK_DAYS = 5;
 // real emails for any additional stakeholders who aren't already a Program Manager.
 var STAKEHOLDER_EMAILS = "stakeholder1@example.com,stakeholder2@example.com";
 
+// Restrict manual_updateSheets to a single class-section instead of scanning every
+// roster file. Set both to run just that class (e.g. classNum "5", section "A").
+// Leave either blank ("") to update every class as before.
+var UPDATE_SHEETS_CLASS_FILTER = "";
+var UPDATE_SHEETS_SECTION_FILTER = "";
+
 // On-Demand Form Defaults — defaults for manual_sendOnDemandForm. REPLACE as needed.
 var ONDEMAND_CLASS_NUM = "5";
 var ONDEMAND_SECTION = "A";

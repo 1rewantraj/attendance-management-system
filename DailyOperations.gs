@@ -119,10 +119,6 @@ function automated_sendDailyForms() {
     // CC the Teacher Lead(s) so they receive the same daily form + alert blocks.
     if (leadCc) mailOptions.cc = leadCc;
 
-    if (alertsResult.teacherBlob) {
-      mailOptions.inlineImages = { teacher_chart: alertsResult.teacherBlob };
-    }
-
     MailApp.sendEmail(mailOptions);
     Logger.log("✅ Sent: " + teacherEmail + (leadCc ? " | CC lead: " + leadCc : "") + " | Class " + classNum + "-" + section);
   }
@@ -210,10 +206,6 @@ function manual_sendOnDemandForm() {
     subject: "📋 On-Demand Attendance Form: Class " + CLASS_NUM + "-" + SECTION.toUpperCase() + " (" + dateStr + ")",
     htmlBody: htmlBody
   };
-
-  if (alertsResult.teacherBlob) {
-    mailOptions.inlineImages = { teacher_chart: alertsResult.teacherBlob };
-  }
 
   MailApp.sendEmail(mailOptions);
   Logger.log("✅ On-demand form sent to: " + teacherEmail);
@@ -593,7 +585,6 @@ function automated_sendWeeklyReport() {
   var masterConfig = buildMasterConfig(configFolder);
 
   var digestContent = "";
-  var allCharts = [];
   var managerEmailsSeen = {};
   var files = outputFolder.getFiles();
 
@@ -633,9 +624,6 @@ function automated_sendWeeklyReport() {
         subject: "📊 Weekly Attendance Report - " + classLabel + " (" + todayStr + ")",
         htmlBody: leadHtml
       };
-      if (alertsResult.stakeholderBlob) {
-        leadMailOptions.inlineImages = { stakeholder_chart_cid: alertsResult.stakeholderBlob };
-      }
       MailApp.sendEmail(leadMailOptions);
       Logger.log("✅ Class report sent to lead: " + classCfg.lead + " | " + classLabel);
     }
@@ -651,16 +639,7 @@ function automated_sendWeeklyReport() {
 
     // CONSOLIDATED DIGEST: append this class's block onto the combined report built below.
     digestContent += '<h3 style="color: #2d3748; margin-top: 25px;">' + classLabel + '</h3>';
-    // Each workbook's chart needs a UNIQUE inline-image CID, otherwise all
-    // blocks reference the same "stakeholder_chart_cid" and the images
-    // collide / render broken. generateAlertBlocks emits the placeholder
-    // src="cid:stakeholder_chart_cid"; swap it here for a per-file CID that
-    // matches what we register in allCharts below.
-    var uniqueCid = 'stakeholder_chart_cid_' + file.getId();
-    digestContent += alertsResult.stakeholderHtml.replace('cid:stakeholder_chart_cid', 'cid:' + uniqueCid);
-    if (alertsResult.stakeholderBlob) {
-      allCharts.push({ cid: uniqueCid, blob: alertsResult.stakeholderBlob });
-    }
+    digestContent += alertsResult.stakeholderHtml;
   }
 
   if (digestContent === "") {
@@ -688,14 +667,6 @@ function automated_sendWeeklyReport() {
     subject: "📊 Weekly Attendance Report - " + todayStr,
     htmlBody: htmlBody
   };
-
-  if (allCharts.length > 0) {
-    var inlineImagesObj = {};
-    for (var c = 0; c < allCharts.length; c++) {
-      inlineImagesObj[allCharts[c].cid] = allCharts[c].blob;
-    }
-    mailOptions.inlineImages = inlineImagesObj;
-  }
 
   MailApp.sendEmail(mailOptions);
   Logger.log("✅ Consolidated report sent to managers & stakeholders: " + recipientList.join(", "));

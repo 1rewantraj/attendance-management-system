@@ -197,10 +197,22 @@ function parseAndNormalizeData(file, returnRaw) {
   return normalizedData;
 }
 
-function getActiveRosterStudents(classNum, section) {
+// Per-execution caches for getActiveRosterStudents. Callers like
+// automated_sendWeeklyReport and updateDashboard invoke this once PER CLASS
+// in a loop — without caching, every call re-lists the entire roster Drive
+// folder (a full getFiles() scan) just to find the one file it already found
+// on a previous call, then re-parses the roster (for Excel/xlsx, an expensive
+// Drive.Files.copy + SpreadsheetApp.openById round-trip) even for classes
+// already parsed this run. Both caches live only for the current script
+// execution (fresh on every run) — never across runs.
+var _rosterFileIndexCache = null;
+var _rosterStudentsCache = {};
+
+function getRosterFileIndex() {
+  if (_rosterFileIndexCache) return _rosterFileIndexCache;
   var rosterFolder = getFolderByLink(STUDENT_CLASS_LIST_FOLDER_LINK);
   var files = rosterFolder.getFiles();
-  var classKey = classNum.toString().toLowerCase() + "_" + section.toString().toLowerCase();
+  var index = {};
 
   while (files.hasNext()) {
     var file = files.next();
@@ -211,16 +223,28 @@ function getActiveRosterStudents(classNum, section) {
 
     var parsed = parseClassAndSectionFromText(file.getName());
     var fileKey = parsed.classNum.toString().toLowerCase() + "_" + parsed.section.toString().toLowerCase();
-    if (fileKey !== classKey) continue;
-
-    return parseAndNormalizeData(file).filter(function(row) {
-      return row[3] === "active" && row[1].toString().trim() !== "";
-    }).map(function(row) {
-      return { rollNo: row[0], childId: row[1].toString().trim(), name: row[2].toString().trim() };
-    });
+    if (!index.hasOwnProperty(fileKey)) index[fileKey] = file; // first match wins, same as before
   }
 
-  throw new Error("No roster found for Class " + classNum + "-" + section.toString().toUpperCase());
+  _rosterFileIndexCache = index;
+  return index;
+}
+
+function getActiveRosterStudents(classNum, section) {
+  var classKey = classNum.toString().toLowerCase() + "_" + section.toString().toLowerCase();
+  if (_rosterStudentsCache.hasOwnProperty(classKey)) return _rosterStudentsCache[classKey];
+
+  var file = getRosterFileIndex()[classKey];
+  if (!file) throw new Error("No roster found for Class " + classNum + "-" + section.toString().toUpperCase());
+
+  var students = parseAndNormalizeData(file).filter(function(row) {
+    return row[3] === "active" && row[1].toString().trim() !== "";
+  }).map(function(row) {
+    return { rollNo: row[0], childId: row[1].toString().trim(), name: row[2].toString().trim() };
+  });
+
+  _rosterStudentsCache[classKey] = students;
+  return students;
 }
 
 function getActiveWorkbookStudents(sheet, activeRosterStudents) {
@@ -909,10 +933,12 @@ function refreshFormulasAndStyles(sheet, totalStudents, daysInMonth, targetYear,
   var footerRow = totalStudents + 2;
   sheet.getRange(footerRow, 1, 3, sheet.getLastColumn()).clearContent();
 
+  var footerFormulas = [];
   for (var col = 4; col <= 3 + daysInMonth; col++) {
     var cLetter = getColLetter(col);
-    sheet.getRange(footerRow, col).setFormula('=COUNTIF(' + cLetter + '2:' + cLetter + (totalStudents + 1) + ', "Present") + COUNTIF(' + cLetter + '2:' + cLetter + (totalStudents + 1) + ', "Late")');
+    footerFormulas.push('=COUNTIF(' + cLetter + '2:' + cLetter + (totalStudents + 1) + ', "Present") + COUNTIF(' + cLetter + '2:' + cLetter + (totalStudents + 1) + ', "Late")');
   }
+  sheet.getRange(footerRow, 4, 1, daysInMonth).setFormulas([footerFormulas]);
 
   sheet.getRange(footerRow + 2, 4 + daysInMonth).setValue("CLASS AVERAGE:");
   sheet.getRange(footerRow + 2, 5 + daysInMonth).setFormula('=AVERAGE(' + getColLetter(9 + daysInMonth) + '2:' + getColLetter(9 + daysInMonth) + (totalStudents + 1) + ')');
@@ -920,25 +946,41 @@ function refreshFormulasAndStyles(sheet, totalStudents, daysInMonth, targetYear,
   sheet.getRange(2, 9 + daysInMonth, totalStudents, 1).setNumberFormat("0.00%");
   sheet.getRange(footerRow + 2, 5 + daysInMonth).setNumberFormat("0.00%");
 
+  // Determine each day's weekend/holiday status up front, then paint the whole
+  // day-grid's backgrounds + validations in ONE batched call apiece (was 2 API
+  // round-trips PER DAY — on a 30/31-day month that's 60+ calls just for this
+  // loop, easily enough to blow the 6-minute execution limit on a slow run and
+  // leave the sheet with red backgrounds only on the months painted so far).
   var validationRule = SpreadsheetApp.newDataValidation().requireValueInList(['Present', 'Absent', 'Late', 'Inactive']).build();
+  var bgRow = [], validationRow = [], holidayFooterRanges = [];
   for (var d = 1; d <= daysInMonth; d++) {
-    var dayCol = 3 + d;
     var currentCellDate = new Date(targetYear, monthIndex, d);
     var dayOfWeek = currentCellDate.getDay();
     var formattedCellDate = Utilities.formatDate(currentCellDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
-
     var isHoliday = holidays && holidays.indexOf(formattedCellDate) > -1;
-    var dayRange = sheet.getRange(2, dayCol, totalStudents, 1);
 
     if (dayOfWeek === 0 || dayOfWeek === 6 || isHoliday) {
-      dayRange.clearDataValidations();
-      dayRange.setBackground("#FF0000");
-      var footerCell = sheet.getRange(footerRow, dayCol);
-      footerCell.clearContent();
+      bgRow.push("#FF0000");
+      validationRow.push(null);
+      holidayFooterRanges.push(sheet.getRange(footerRow, 3 + d).getA1Notation());
     } else {
-      dayRange.setDataValidation(validationRule);
-      dayRange.setBackground(null);
+      bgRow.push(null);
+      validationRow.push(validationRule);
     }
+  }
+
+  var bgMatrix = [], validationMatrix = [];
+  for (var s = 0; s < totalStudents; s++) {
+    bgMatrix.push(bgRow);
+    validationMatrix.push(validationRow);
+  }
+
+  var dayGridRange = sheet.getRange(2, 4, totalStudents, daysInMonth);
+  dayGridRange.setBackgrounds(bgMatrix);
+  dayGridRange.setDataValidations(validationMatrix);
+
+  if (holidayFooterRanges.length > 0) {
+    sheet.getRangeList(holidayFooterRanges).clearContent();
   }
 
   var dynamicDayGridRange = sheet.getRange(2, 4, totalStudents, daysInMonth);
@@ -1025,7 +1067,16 @@ function unlockStudentRow(sheet, rowNum, totalCols, daysInMonth, childId, isPast
   sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE).forEach(function(p) {
     if (p.getDescription() === tag) p.remove();
   });
-  sheet.getRange(rowNum, 1, 1, totalCols).setBackground(null);
+  // Only clear background on the non-day columns (Roll No./Child ID/Name, and the
+  // summary/formula columns after the day grid). The day columns (4..3+daysInMonth)
+  // are left alone: refreshFormulasAndStyles runs earlier in the same pass and
+  // already repainted every row's day cells with the correct weekend/holiday red
+  // or normal background — blanking them here would wipe that color back out.
+  sheet.getRange(rowNum, 1, 1, 3).setBackground(null);
+  var afterDayCol = 4 + daysInMonth;
+  if (totalCols >= afterDayCol) {
+    sheet.getRange(rowNum, afterDayCol, 1, totalCols - afterDayCol + 1).setBackground(null);
+  }
 
   var clearFromDay = firstEditableDay(isPastMonth, isCurrentMonth, todayDay);
   if (clearFromDay > 0 && clearFromDay <= daysInMonth) {
@@ -1290,104 +1341,64 @@ function generateAlertBlocks(ss, sheet, students, today) {
   teacherChartData.sort(function(a, b) { return b.total - a.total; });
   stakeholderChartData.sort(function(a, b) { return b.total - a.total; });
 
-  var MAX_CHART_STUDENTS = 20;
-
-  // Builds a collapsible <details> block listing every flagged student in a
-  // category with their Student ID, Name and day-count. <details>/<summary> is
-  // natively collapsible in Apple Mail & Outlook; Gmail strips the toggle but
-  // still renders the list expanded — so it degrades gracefully everywhere.
-  // metricKey = 'absences' | 'lates'; only students with a positive count for
-  // that metric are listed. accent = header/border color.
-  function buildCategoryRoster(dataArray, metricKey, label, accent) {
-    var rows = dataArray.filter(function(d) { return (d[metricKey] || 0) > 0; });
+  // Builds a single collapsible <details> block listing every flagged student
+  // with their Absences and Lates counts side by side, sorted by Absences
+  // descending. A student who is e.g. 2x Absent + 1x Late appears ONCE with
+  // both counts, rather than being split across separate Absences/Lates
+  // categories (which duplicated them with only one count each visible).
+  // <details>/<summary> is natively collapsible in Apple Mail & Outlook;
+  // Gmail strips the toggle but still renders the list expanded — so it
+  // degrades gracefully everywhere.
+  function buildCollapsibleRosters(dataArray) {
+    var rows = dataArray.filter(function(d) { return (d.absences || 0) > 0 || (d.lates || 0) > 0; });
     if (rows.length === 0) return "";
+    rows = rows.slice().sort(function(a, b) { return (b.absences || 0) - (a.absences || 0); });
     var body = "";
     for (var i = 0; i < rows.length; i++) {
       var rowBg = (i % 2 === 0) ? "#ffffff" : "#f7fafc";
       body += '<tr style="background-color:' + rowBg + ';">' +
               '<td style="padding:6px 10px; font-size:13px; color:#4a5568; border-bottom:1px solid #edf2f7;">' + (rows[i].id || "—") + '</td>' +
               '<td style="padding:6px 10px; font-size:13px; color:#2d3748; border-bottom:1px solid #edf2f7;">' + rows[i].name + '</td>' +
-              '<td style="padding:6px 10px; font-size:13px; color:#2d3748; text-align:center; font-weight:bold; border-bottom:1px solid #edf2f7;">' + rows[i][metricKey] + '</td>' +
+              '<td style="padding:6px 10px; font-size:13px; color:#c53030; text-align:center; font-weight:bold; border-bottom:1px solid #edf2f7;">' + (rows[i].absences || 0) + '</td>' +
+              '<td style="padding:6px 10px; font-size:13px; color:#b7791f; text-align:center; font-weight:bold; border-bottom:1px solid #edf2f7;">' + (rows[i].lates || 0) + '</td>' +
               '</tr>';
     }
     return '<details style="margin-top:12px; border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">' +
-           '<summary style="cursor:pointer; padding:10px 14px; background-color:' + accent + '; color:#fff; font-size:14px; font-weight:bold; list-style:none;">' +
-           label + ' (' + rows.length + ' student' + (rows.length === 1 ? '' : 's') + ') ▾</summary>' +
+           '<summary style="cursor:pointer; padding:10px 14px; background-color:#4a5568; color:#fff; font-size:14px; font-weight:bold; list-style:none;">' +
+           '⚠️ Flagged Students (' + rows.length + ' student' + (rows.length === 1 ? '' : 's') + ') ▾</summary>' +
            '<table style="width:100%; border-collapse:collapse;">' +
            '<tr style="background-color:#edf2f7;">' +
            '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:left;">Student ID</th>' +
            '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:left;">Name</th>' +
-           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:center;">Days</th>' +
+           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:center;">Absences</th>' +
+           '<th style="padding:6px 10px; font-size:12px; color:#4a5568; text-align:center;">Lates</th>' +
            '</tr>' + body + '</table></details>';
   }
 
-  // Two collapsible categories (Absences, Lates) covering ALL flagged students
-  // — not just the top-20 shown in the chart image.
-  function buildCollapsibleRosters(dataArray) {
-    return buildCategoryRoster(dataArray, 'absences', '🔴 Absences', '#c53030') +
-           buildCategoryRoster(dataArray, 'lates', '🟡 Lates', '#b7791f');
-  }
-
-  var teacherChartDisplay = teacherChartData.slice(0, MAX_CHART_STUDENTS);
-  var stakeholderChartDisplay = stakeholderChartData.slice(0, MAX_CHART_STUDENTS);
-  // teacherData / stakeholderData expose the raw flagged-student arrays (full,
-  // not sliced to the top 20) so other consumers — e.g. the Analysis_Dashboard
-  // Section 4 — can render the same chronic-risk data without re-deriving the
-  // lookback logic. Each entry: { name, absences, lates, total }.
+  // teacherData / stakeholderData expose the raw flagged-student arrays so
+  // other consumers — e.g. the Analysis_Dashboard Section 4 — can render the
+  // same chronic-risk data without re-deriving the lookback logic. Each
+  // entry: { name, absences, lates, total }.
   var result = {
-    teacherHtml: "", teacherBlob: null, stakeholderHtml: "", stakeholderBlob: null,
+    teacherHtml: "", stakeholderHtml: "",
     teacherData: teacherChartData, stakeholderData: stakeholderChartData
   };
 
-  if (teacherChartDisplay.length > 0) {
-    var chartTitle = teacherChartData.length > MAX_CHART_STUDENTS ? "Consecutive Absences & Lates (Top " + MAX_CHART_STUDENTS + ")" : "Consecutive Absences & Lates";
-    result.teacherBlob = createStackedBarChart(teacherChartDisplay, chartTitle);
+  if (teacherChartData.length > 0) {
     result.teacherHtml = '<div style="background-color: #fff; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">' +
                          '<h3 style="color: #2d3748; margin-top: 0;">⚠️ Immediate Attention Required</h3>' +
-                         '<p style="color: #718096; font-size: 14px;">The chart below highlights students currently on a consecutive streak (including mixed and skip-adjusted streaks) of absences or late arrivals.</p>' +
-                         '<img src="cid:teacher_chart" style="max-width: 100%; height: auto; border-radius: 4px;">' +
+                         '<p style="color: #718096; font-size: 14px;">Students currently on a consecutive streak (including mixed and skip-adjusted streaks) of absences or late arrivals.</p>' +
                          buildCollapsibleRosters(teacherChartData) + '</div>';
   }
 
-  if (stakeholderChartDisplay.length > 0) {
-    var chartTitle2 = stakeholderChartData.length > MAX_CHART_STUDENTS ? "Chronic Absences & Lates (Top " + MAX_CHART_STUDENTS + ")" : "Chronic Absences & Lates";
-    result.stakeholderBlob = createStackedBarChart(stakeholderChartDisplay, chartTitle2);
+  if (stakeholderChartData.length > 0) {
     result.stakeholderHtml = '<div style="background-color: #fff; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">' +
                              '<h3 style="color: #2d3748; margin-top: 0;">📉 Chronic Attendance Risks</h3>' +
                              '<p style="color: #718096; font-size: 14px;">Students with frequent absences or late arrivals over the lookback period.</p>' +
-                             '<img src="cid:stakeholder_chart_cid" style="max-width: 100%; height: auto; border-radius: 4px;">' +
                              buildCollapsibleRosters(stakeholderChartData) + '</div>';
   }
 
   return result;
-}
-
-function createStackedBarChart(data, title) {
-  var dataTable = Charts.newDataTable()
-    .addColumn(Charts.ColumnType.STRING, 'Student')
-    .addColumn(Charts.ColumnType.NUMBER, 'Absences')
-    .addColumn(Charts.ColumnType.NUMBER, 'Lates');
-
-  for (var i = 0; i < data.length; i++) {
-    var metrics = [];
-    if (data[i].absences > 0) metrics.push(data[i].absences + "A");
-    if (data[i].lates > 0) metrics.push(data[i].lates + "L");
-    var studentLabel = data[i].name + " (" + metrics.join(", ") + ")";
-    dataTable.addRow([studentLabel, data[i].absences, data[i].lates]);
-  }
-
-  var chartHeight = Math.max(250, data.length * 45 + 100);
-  var chart = Charts.newBarChart()
-    .setDataTable(dataTable)
-    .setTitle(title)
-    .setStacked()
-    .setColors(['#e53e3e', '#d69e2e'])
-    .setDimensions(550, chartHeight)
-    .setXAxisTitle('Total Days (Combined)')
-    .setOption('chartArea', {left: '25%', width: '70%'})
-    .build();
-
-  return chart.getAs('image/png');
 }
 
 // =========================================================================
