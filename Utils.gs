@@ -933,7 +933,7 @@ function refreshFormulasAndStyles(sheet, totalStudents, daysInMonth, targetYear,
   sheet.getRange(2, 9 + daysInMonth, totalStudents, 1).setNumberFormat("0.00%");
   sheet.getRange(footerRow + 2, 5 + daysInMonth).setNumberFormat("0.00%");
 
-  var validationRule = SpreadsheetApp.newDataValidation().requireValueInList(['Present', 'Absent', 'Late']).build();
+  var validationRule = SpreadsheetApp.newDataValidation().requireValueInList(['Present', 'Absent', 'Late', 'Inactive']).build();
   for (var d = 1; d <= daysInMonth; d++) {
     var dayCol = 3 + d;
     var currentCellDate = new Date(targetYear, monthIndex, d);
@@ -958,7 +958,8 @@ function refreshFormulasAndStyles(sheet, totalStudents, daysInMonth, targetYear,
   var pRule = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("Present").setBackground("#D4EDDA").setFontColor("#155724").setRanges([dynamicDayGridRange]).build();
   var aRule = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("Absent").setBackground("#F8D7DA").setFontColor("#721C24").setRanges([dynamicDayGridRange]).build();
   var lRule = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("Late").setBackground("#FFF3CD").setFontColor("#856404").setRanges([dynamicDayGridRange]).build();
-  sheet.setConditionalFormatRules([pRule, aRule, lRule]);
+  var iRule = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("Inactive").setBackground("#D9D9D9").setFontColor("#6C757D").setRanges([dynamicDayGridRange]).build();
+  sheet.setConditionalFormatRules([pRule, aRule, lRule, iRule]);
 
   sheet.setFrozenRows(1);
   sheet.setFrozenColumns(3);
@@ -983,6 +984,70 @@ function fillWithPlaceholders(range, rows, cols) {
     output.push(rowArr);
   }
   range.setValues(output).setHorizontalAlignment("center");
+}
+
+var INACTIVE_ROW_LOCK_TAG_PREFIX = "INACTIVE_LOCK:";
+
+// First day column (1-based day-of-month) this row's lock/unlock should touch:
+// -1 for a fully past month (never touch recorded history), today's date for
+// the current month (leave already-passed days alone), or day 1 for a month
+// that hasn't started yet.
+function firstEditableDay(isPastMonth, isCurrentMonth, todayDay) {
+  if (isPastMonth) return -1;
+  return isCurrentMonth ? todayDay : 1;
+}
+
+// Greys out and protects a dropped-out student's row so it can no longer be
+// edited, while leaving every other row's values/formatting/formulas alone.
+// Not-yet-recorded day cells (today onward this month, or the whole month for
+// a future one) are written as "Inactive" — the 4th status category — so the
+// row reads solid grey via the same conditional-formatting mechanism as
+// Present/Absent/Late; cells that already hold a real mark from before the
+// student went inactive are left as-is, and past months are never touched.
+// Tagged by childId (not row number) so re-running is idempotent even if row
+// positions shift between updates.
+function lockInactiveStudentRow(sheet, rowNum, totalCols, daysInMonth, childId, isPastMonth, isCurrentMonth, todayDay) {
+  var tag = INACTIVE_ROW_LOCK_TAG_PREFIX + childId;
+  var alreadyLocked = sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE)
+    .some(function(p) { return p.getDescription() === tag; });
+
+  sheet.getRange(rowNum, 1, 1, totalCols).setBackground("#D9D9D9");
+  sheet.getRange(rowNum, 4, 1, daysInMonth).clearDataValidations();
+
+  var fillFromDay = firstEditableDay(isPastMonth, isCurrentMonth, todayDay);
+  if (fillFromDay > 0 && fillFromDay <= daysInMonth) {
+    var fillRange = sheet.getRange(rowNum, 3 + fillFromDay, 1, daysInMonth - fillFromDay + 1);
+    var newRow = fillRange.getValues()[0].map(function(v) {
+      var s = v == null ? "" : v.toString().trim();
+      return (s === "Present" || s === "Absent" || s === "Late") ? s : "Inactive";
+    });
+    fillRange.setValues([newRow]);
+  }
+
+  if (alreadyLocked) return;
+  var protection = sheet.getRange(rowNum, 1, 1, totalCols).protect().setDescription(tag);
+  protection.removeEditors(protection.getEditors());
+  if (protection.canDomainEdit()) protection.setDomainEdit(false);
+}
+
+// Reverses lockInactiveStudentRow for a student who is active again (e.g. a
+// re-enrolled drop-out): removes the lock/grey and clears any "Inactive"
+// filler this function wrote, leaving real historical marks untouched.
+function unlockStudentRow(sheet, rowNum, totalCols, daysInMonth, childId, isPastMonth, isCurrentMonth, todayDay) {
+  var tag = INACTIVE_ROW_LOCK_TAG_PREFIX + childId;
+  sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE).forEach(function(p) {
+    if (p.getDescription() === tag) p.remove();
+  });
+  sheet.getRange(rowNum, 1, 1, totalCols).setBackground(null);
+
+  var clearFromDay = firstEditableDay(isPastMonth, isCurrentMonth, todayDay);
+  if (clearFromDay > 0 && clearFromDay <= daysInMonth) {
+    var clearRange = sheet.getRange(rowNum, 3 + clearFromDay, 1, daysInMonth - clearFromDay + 1);
+    var newRow = clearRange.getValues()[0].map(function(v) {
+      return (v != null && v.toString().trim() === "Inactive") ? "" : v;
+    });
+    clearRange.setValues([newRow]);
+  }
 }
 
 function buildVisualizations(sheet, totalStudents, daysInMonth) {
@@ -1051,8 +1116,7 @@ function generateAlertBlocks(ss, sheet, students, today) {
     CONSECUTIVE_ABSENT_THRESHOLD_DAYS + ALLOWED_PRESENT_SKIPS,
     CONSECUTIVE_LATE_THRESHOLD_DAYS + ALLOWED_PRESENT_SKIPS,
     CONSECUTIVE_MIXED_THRESHOLD_DAYS + ALLOWED_PRESENT_SKIPS,
-    ABSENT_LOOKBACK_DAYS,
-    LATE_LOOKBACK_DAYS,
+    CHRONIC_MISHAP_LOOKBACK_DAYS,
     20
   );
 
@@ -1224,15 +1288,18 @@ function generateAlertBlocks(ss, sheet, students, today) {
       teacherChartData.push({ id: student.childId, name: student.name, absences: aCount, lates: lCount, total: aCount + lCount });
     }
 
-    var daysToCheckAbsent = Math.min(statuses.length, ABSENT_LOOKBACK_DAYS);
-    var absentCount = 0;
-    for (var i = 0; i < daysToCheckAbsent; i++) { if (statuses[i] === "Absent") absentCount++; }
+    // Chronic risk: combined Absent + Late count within the last
+    // CHRONIC_MISHAP_LOOKBACK_DAYS working days (e.g. 3-of-5), not two
+    // separate absent-only / late-only checks — a student who is late twice
+    // and absent once in that window is just as at-risk as one absent 3 times.
+    var daysToCheckMishaps = Math.min(statuses.length, CHRONIC_MISHAP_LOOKBACK_DAYS);
+    var absentCount = 0, lateCount = 0;
+    for (var i = 0; i < daysToCheckMishaps; i++) {
+      if (statuses[i] === "Absent") absentCount++;
+      else if (statuses[i] === "Late") lateCount++;
+    }
 
-    var daysToCheckLate = Math.min(statuses.length, LATE_LOOKBACK_DAYS);
-    var lateCount = 0;
-    for (var i = 0; i < daysToCheckLate; i++) { if (statuses[i] === "Late") lateCount++; }
-
-    if (absentCount >= ABSENT_THRESHOLD_DAYS || lateCount >= LATE_THRESHOLD_DAYS) {
+    if (absentCount + lateCount >= CHRONIC_MISHAP_THRESHOLD_DAYS) {
       stakeholderChartData.push({ id: student.childId, name: student.name, absences: absentCount, lates: lateCount, total: absentCount + lateCount });
     }
   }
@@ -1943,13 +2010,13 @@ function updateDashboard(ss) {
 
   // --- Section 4: Chronic Attendance Risks (same signal as Weekly Report) ---
   // Reuses generateAlertBlocks so this stays identical to the Friday stakeholder
-  // email: students with >= ABSENT_THRESHOLD_DAYS absences in the last
-  // ABSENT_LOOKBACK_DAYS days, OR >= LATE_THRESHOLD_DAYS lates in the last
-  // LATE_LOOKBACK_DAYS days. Evaluated against the CURRENT month tab (the alert
-  // scan walks back into prior months on its own when the lookback needs it).
+  // email: students whose combined Absent + Late count reaches
+  // CHRONIC_MISHAP_THRESHOLD_DAYS within the last CHRONIC_MISHAP_LOOKBACK_DAYS
+  // working days (e.g. 3-of-5). Evaluated against the CURRENT month tab (the
+  // alert scan walks back into prior months on its own when the lookback needs it).
   currentRow += 2;
   dashboardSheet.getRange(currentRow, 1).setValue("4. Chronic Attendance Risks (Last "
-    + Math.max(ABSENT_LOOKBACK_DAYS, LATE_LOOKBACK_DAYS) + " Days)").setFontWeight("bold").setFontSize(12);
+    + CHRONIC_MISHAP_LOOKBACK_DAYS + " Days)").setFontWeight("bold").setFontSize(12);
   currentRow++;
 
   const riskHeaders = ['Student', 'Absences', 'Lates', 'Total Flags'];

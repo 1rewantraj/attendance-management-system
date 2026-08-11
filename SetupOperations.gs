@@ -139,6 +139,9 @@ function manual_updateSheets() {
     var csvRoster = parseAndNormalizeData(file);
     if (csvRoster.length === 0) continue;
 
+    var statusById = {};
+    csvRoster.forEach(function(row) { statusById[row[1].toString().trim()] = row[3]; });
+
     Logger.log("--> Checking updates for: " + targetSpreadsheetName);
 
     // Check and update permissions if needed
@@ -154,6 +157,7 @@ function manual_updateSheets() {
       var isCurrentMonth = (monthInfo.year === todayYear && monthInfo.monthIndex === todayMonth);
       var lastRow = sheet.getLastRow();
       var existingIds = [];
+      var idToRow = {};
       var currentStudentCount = 0;
 
       // Count existing students: scan Child ID (col B) from row 2 until the
@@ -165,6 +169,7 @@ function manual_updateSheets() {
           var id = colBValues[k][0].toString().trim();
           if (id !== "" && !isNaN(sheet.getRange(k + 2, 1).getValue())) {
             existingIds.push(id);
+            idToRow[id] = k + 2;
             currentStudentCount++;
           } else break;
         }
@@ -208,6 +213,20 @@ function manual_updateSheets() {
       if (totalStudentsNow > 0) {
         refreshFormulasAndStyles(sheet, totalStudentsNow, daysInMonth, monthInfo.year, monthInfo.monthIndex, monthInfo.name, holidays);
       }
+
+      // 3. LOCK OUT DROPPED-OUT STUDENTS. Runs AFTER refreshFormulasAndStyles,
+      // which repaints the whole day grid (including this row) — so the grey
+      // lock must be applied last or it gets overwritten. Only the affected
+      // student's own row is touched; every other row is left exactly as-is.
+      var totalCols = 9 + daysInMonth;
+      existingIds.forEach(function(id) {
+        var rowNum = idToRow[id];
+        if (statusById[id] === "inactive") {
+          lockInactiveStudentRow(sheet, rowNum, totalCols, daysInMonth, id, isPastMonth, isCurrentMonth, todayDay);
+        } else if (statusById[id] === "active") {
+          unlockStudentRow(sheet, rowNum, totalCols, daysInMonth, id, isPastMonth, isCurrentMonth, todayDay);
+        }
+      });
     }
   }
   

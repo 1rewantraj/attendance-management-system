@@ -28,10 +28,12 @@ var CONSECUTIVE_LATE_THRESHOLD_DAYS = 3;
 var CONSECUTIVE_MIXED_THRESHOLD_DAYS = 4; 
 var ALLOWED_PRESENT_SKIPS = 2; 
 
-var ABSENT_THRESHOLD_DAYS = 3; 
-var ABSENT_LOOKBACK_DAYS = 5; 
-var LATE_THRESHOLD_DAYS = 3; 
-var LATE_LOOKBACK_DAYS = 5; 
+// Chronic attendance risk (weekly stakeholder report + dashboard): flag a
+// student whose combined Absent + Late count reaches the threshold within
+// the last N working days (weekends/holidays/non-instructional days are
+// already excluded from the lookback before this count runs).
+var CHRONIC_MISHAP_THRESHOLD_DAYS = 3;
+var CHRONIC_MISHAP_LOOKBACK_DAYS = 5;
 
 // Comma-separated recipients of the weekly stakeholder report. REPLACE with real emails.
 var STAKEHOLDER_EMAILS = "stakeholder1@example.com,stakeholder2@example.com";
