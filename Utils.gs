@@ -1,7 +1,3 @@
-// =========================================================================
-// Utils.gs - ALL UTILITY & SYSTEM FUNCTIONS
-// =========================================================================
-
 function getFolderByLink(url) {
   if (!url || url === "YOUR_CONFIG_FOLDER_LINK_HERE" || url === "YOUR_CLASS_ROSTER_FOLDER_LINK_HERE" || url === "YOUR_ATTENDANCE_SHEETS_FOLDER_LINK_HERE") {
     throw new Error("❌ Folder link not configured. Please set the folder links in Config.gs and run manual_validateConfig()");

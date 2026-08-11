@@ -578,6 +578,12 @@ function manual_cleanupOrphanForms() {
 
 // =========================================================================
 // AUTOMATED (Friday 5 PM trigger): Weekly Stakeholder Report
+// -------------------------------------------------------------------------
+// Sends TWO kinds of emails per run: one per-class report to that class's
+// Teacher Lead (only its own chronic-alert block), and one consolidated
+// digest covering every class with a chronic alert this week, sent to every
+// Program Manager seen across those classes plus the static
+// STAKEHOLDER_EMAILS list (deduped, one send).
 // =========================================================================
 function automated_sendWeeklyReport() {
   var today = new Date();
@@ -634,6 +640,8 @@ function automated_sendWeeklyReport() {
       Logger.log("✅ Class report sent to lead: " + classCfg.lead + " | " + classLabel);
     }
 
+    // Collect this class's Program Manager(s) to CC on the consolidated
+    // digest below (built once, after the loop, from every class seen here).
     if (classCfg && classCfg.manager) {
       classCfg.manager.split(",").forEach(function(e) {
         var em = e.trim().toLowerCase();
@@ -641,7 +649,7 @@ function automated_sendWeeklyReport() {
       });
     }
 
-    // CONSOLIDATED DIGEST: every class's block, folded into one combined report below.
+    // CONSOLIDATED DIGEST: append this class's block onto the combined report built below.
     digestContent += '<h3 style="color: #2d3748; margin-top: 25px;">' + classLabel + '</h3>';
     // Each workbook's chart needs a UNIQUE inline-image CID, otherwise all
     // blocks reference the same "stakeholder_chart_cid" and the images

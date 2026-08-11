@@ -1,7 +1,3 @@
-// =========================================================================
-// FILE 1: Config.gs (Global Variables)
-// =========================================================================
-
 // Folder Links — REPLACE these placeholders with your own Google Drive folder URLs.
 // (Get a folder's link: open it in Drive → copy the address bar URL.)
 var STUDENT_CLASS_LIST_FOLDER_LINK = "https://drive.google.com/drive/folders/YOUR_STUDENT_CLASS_LIST_FOLDER_ID";
@@ -35,7 +31,9 @@ var ALLOWED_PRESENT_SKIPS = 2;
 var CHRONIC_MISHAP_THRESHOLD_DAYS = 3;
 var CHRONIC_MISHAP_LOOKBACK_DAYS = 5;
 
-// Comma-separated recipients of the weekly stakeholder report. REPLACE with real emails.
+// Comma-separated recipients of the consolidated weekly report (automated_sendWeeklyReport).
+// Every class's Program Manager is added automatically on top of this list — REPLACE with
+// real emails for any additional stakeholders who aren't already a Program Manager.
 var STAKEHOLDER_EMAILS = "stakeholder1@example.com,stakeholder2@example.com";
 
 // On-Demand Form Defaults — defaults for manual_sendOnDemandForm. REPLACE as needed.

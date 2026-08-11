@@ -84,7 +84,10 @@ these lines:
 - **`ACADEMIC_YEAR`** → the school year, e.g. `"2026-2027"`.
 - **`START_MONTH`** / **`END_MONTH`** → the first and last month of the year as numbers
   (June = `6`, April = `4`).
-- **`STAKEHOLDER_EMAILS`** → who should get the weekly report, separated by commas.
+- **`STAKEHOLDER_EMAILS`** → who should get the consolidated weekly report, separated by
+  commas. Every class's Program Manager (from the optional `programManagers`/
+  `teacherLeads` files) is added automatically — only list people here who aren't
+  already a Program Manager.
 
 Leave everything else as it is. Save the file.
 
@@ -132,7 +135,9 @@ You don't touch anything day to day. Behind the scenes:
   refresh, and leftover forms / stray response tabs are tidied up automatically.
 - **11:00 PM every day** — a final sync runs, the dashboards refresh once more, and
   the day's forms are closed.
-- **Every Friday, 5:00 PM** — a summary report is emailed to the stakeholders.
+- **Every Friday, 5:00 PM** — each class's Teacher Lead gets a report for just their
+  class, and a consolidated report covering every class goes to all Program Managers
+  and the stakeholders listed in `STAKEHOLDER_EMAILS`.
 
 Weekends and the holidays you listed are skipped automatically.
 
@@ -145,6 +150,10 @@ Weekends and the holidays you listed are skipped automatically.
   `Attendance: Class 1-A (25-Jul-2026)`. You don't create these — they appear on their own.
 - **New students mid-year:** update that class's roster file, then run
   **`manual_updateSheets`**. It adds the new students without erasing existing records.
+- **A student drops out:** set their roster row's Status to **Inactive**, then run
+  **`manual_updateSheets`**. Their row is greyed out and locked (no further marks can
+  be entered) from today onward, but every earlier day's attendance stays untouched.
+  Setting Status back to **Active** unlocks the row again.
 - **Don't run the setup twice:** running `manual_installTriggers` more than once creates
   duplicate automations. If unsure, open the **Triggers** page (clock icon) — you should
   see exactly **4** items. Delete any extras.
