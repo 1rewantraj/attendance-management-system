@@ -916,6 +916,17 @@ function buildAttendanceWorkbook(ss, rosterData, monthsToCreate, holidays) {
 }
 
 function refreshFormulasAndStyles(sheet, totalStudents, daysInMonth, targetYear, monthIndex, monthName, holidays) {
+  // Temporarily lift any INACTIVE_LOCK: protections left by a prior
+  // manual_updateSheets run before repainting the day grid below — otherwise
+  // writing into a still-protected inactive student's row throws "You are
+  // trying to edit a protected cell". The caller's lock/unlock pass (which
+  // runs AFTER this function, per student's current status) re-applies
+  // protection to anyone still inactive, so this doesn't leave locked rows
+  // editable.
+  sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE).forEach(function(p) {
+    if (p.getDescription().indexOf(INACTIVE_ROW_LOCK_TAG_PREFIX) === 0) p.remove();
+  });
+
   var startDayLetter = "D", endDayLetter = getColLetter(3 + daysInMonth), formulas = [];
   for (var i = 0; i < totalStudents; i++) {
     var r = i + 2;
